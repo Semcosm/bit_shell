@@ -3,8 +3,10 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #define BS_TOPIC_COUNT 6
+#define BS_IPC_COORD_UNSET INT32_MIN
 
 typedef enum {
   BS_TOPIC_SHELL = 0,
@@ -34,6 +36,18 @@ typedef struct {
   bool values[BS_TOPIC_COUNT];
 } BsTopicSet;
 
+typedef struct {
+  BsCommand command;
+  BsTopicSet topics;
+  char *desktop_id;
+  char *app_key;
+  char *window_id;
+  char *workspace_id;
+  char *item_id;
+  int32_t x;
+  int32_t y;
+} BsCommandRequest;
+
 const char *bs_topic_to_string(BsTopic topic);
 bool bs_topic_from_string(const char *value, BsTopic *topic_out);
 
@@ -44,5 +58,9 @@ void bs_topic_set_clear(BsTopicSet *set);
 void bs_topic_set_add(BsTopicSet *set, BsTopic topic);
 bool bs_topic_set_contains(const BsTopicSet *set, BsTopic topic);
 size_t bs_topic_set_count(const BsTopicSet *set);
+char *bs_topic_set_to_json(const BsTopicSet *set);
+
+void bs_command_request_init(BsCommandRequest *request);
+void bs_command_request_clear(BsCommandRequest *request);
 
 #endif

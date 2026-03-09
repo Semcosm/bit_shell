@@ -48,6 +48,24 @@ bs_runtime_paths_init(BsRuntimePaths *paths) {
 }
 
 void
+bs_runtime_paths_init_user_defaults(BsRuntimePaths *paths) {
+  const char *runtime_dir = NULL;
+
+  g_return_if_fail(paths != NULL);
+
+  bs_runtime_paths_init(paths);
+  runtime_dir = g_get_user_runtime_dir();
+
+  paths->niri_socket_path = bs_strdup_or_null(g_getenv("NIRI_SOCKET"));
+  paths->ipc_socket_path = runtime_dir != NULL
+                             ? g_build_filename(runtime_dir, "bit_shell", "bit_shelld.sock", NULL)
+                             : g_build_filename(g_get_tmp_dir(), "bit_shell", "bit_shelld.sock", NULL);
+  paths->config_path = g_build_filename(g_get_user_config_dir(), "bit_shell", "config.toml", NULL);
+  paths->state_path = g_build_filename(g_get_user_state_dir(), "bit_shell", "state.json", NULL);
+  paths->applications_dir = g_build_filename(g_get_user_data_dir(), "applications", NULL);
+}
+
+void
 bs_runtime_paths_clear(BsRuntimePaths *paths) {
   if (paths == NULL) {
     return;
@@ -78,7 +96,7 @@ bs_shell_config_init_defaults(BsShellConfig *config) {
   g_return_if_fail(config != NULL);
 
   memset(config, 0, sizeof(*config));
-  bs_runtime_paths_init(&config->paths);
+  bs_runtime_paths_init_user_defaults(&config->paths);
 
   config->tray_watcher_name = g_strdup("org.kde.StatusNotifierWatcher");
   config->auto_reconnect_niri = true;

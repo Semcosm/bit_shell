@@ -19,5 +19,8 @@ typedef struct {
 void bs_snapshot_init(BsSnapshot *snapshot);
 void bs_snapshot_clear(BsSnapshot *snapshot);
 uint64_t bs_snapshot_topic_generation(const BsSnapshot *snapshot, BsTopic topic);
+char *bs_snapshot_serialize_topic_versions_json(const BsSnapshot *snapshot);
+char *bs_snapshot_serialize_topic_payload_json(const BsSnapshot *snapshot, BsTopic topic);
+char *bs_snapshot_serialize_json(const BsSnapshot *snapshot);
 
 #endif

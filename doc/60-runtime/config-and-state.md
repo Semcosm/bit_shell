@@ -53,74 +53,14 @@
 
 ## 运行时状态内容
 
-### pinned apps
-
-```json
-{
-  "pinned_apps": [
-    "org.mozilla.firefox.desktop",
-    "org.wezfurlong.wezterm.desktop"
-  ]
-}
-```
-
-### recent apps
-
-```json
-{
-  "recent_apps": [
-    { "app_key": "org.mozilla.firefox.desktop", "score": 120 },
-    { "app_key": "org.wezfurlong.wezterm.desktop", "score": 90 }
-  ]
-}
-```
-
-### launch counts / favorites
-
-- `launch_counts`
+- `pinned_apps`
+- `recent_apps`
 - `favorites`
 - `recent_workspaces`
 
-## 默认值建议
+## 当前 core 落地状态
 
-### shell
-
-- `auto_reconnect_niri = true`
-- `tray_watcher_name = "org.kde.StatusNotifierWatcher"`
-
-### bar
-
-- `height_px = 32`
-- `show_workspace_strip = true`
-- `show_focused_title = true`
-- `show_tray = true`
-- `show_clock = true`
-
-### dock
-
-- `icon_size_px = 48`
-- `spacing_px = 8`
-- `display_mode = "immersive"`
-- `enable_magnification = true`
-- `center_on_primary_output = true`
-
-### launchpad
-
-- `resident = true`
-- `grid_icon_size_px = 64`
-- `max_recent_apps = 12`
-- `show_categories = true`
-
-## 落盘策略
-
-- 配置文件读取失败：记录错误并回退到默认值
-- 状态文件损坏：记录错误并生成空状态，不阻塞 shell 启动
-- 用户操作导致的状态更新：异步或批量 flush
-- shell 正常退出：执行一次最终 flush
-
-## 与 core 的对应关系
-
-- `BsRuntimePaths`：路径集合
-- `BsShellConfig`：静态配置视图
-- `BsBarConfig` / `BsDockConfig` / `BsLaunchpadConfig`：分组件配置
-- `BsSettingsService`：读取、持有与落盘这些数据
+- `BsSettingsService.load()` 会确保 `config.toml` 与 `state.json` 的父目录存在
+- 若文件缺失，core 会自动写入一份 **stub** 配置/状态文件
+- 现阶段已实现“路径真实落盘”，但 TOML / JSON 的完整字段级解析仍为后续工作；存在旧文件时当前实现会读取并记录日志，但不会完整覆盖内存配置
+- `flush()` 当前会把运行时状态以占位 JSON 结构写回 `state.json`，用于打通 I/O 路径与退出时最终落盘

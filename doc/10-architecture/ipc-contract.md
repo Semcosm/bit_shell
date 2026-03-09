@@ -15,7 +15,7 @@ v1 的协议目标不是追求泛化，而是保证以下几点：
 
 - 传输层：Unix domain socket
 - 编码：UTF-8 JSON
-- 消息边界：一条请求对应一条 JSON 对象；实现层可采用单行 JSON 或长度前缀，v1 文档以“单对象”描述语义
+- 消息边界：当前实现采用**单行 JSON**，即一条请求/响应/事件占一行；客户端建立长连接后可持续收发多条消息
 - socket 路径：由 `shell.paths.ipc_socket_path` 决定
 
 ## 角色
@@ -33,15 +33,6 @@ topic 与 `BsTopic` 一致：
 - `dock`
 - `tray`
 - `settings`
-
-### topic 语义
-
-- `shell`：全局状态、焦点 app、launchpad 显示状态、错误与生命周期事件
-- `windows`：窗口增删改、焦点变化、窗口标题与 app 归并结果
-- `workspaces`：输出与工作区变化
-- `dock`：dock item 聚合结果
-- `tray`：SNI item 列表与状态变化
-- `settings`：配置与用户状态变化
 
 ## command 枚举
 
@@ -117,19 +108,18 @@ topic 与 `BsTopic` 一致：
 { "op": "subscribe", "topics": ["shell", "dock", "tray"] }
 ```
 
-约束：
-
-- `topics` 不能为空
-- topic 必须可解析为 `BsTopic`
-- 重复 topic 应去重
-
 响应示例：
 
 ```json
 {
   "ok": true,
   "kind": "subscribed",
-  "topics": ["shell", "dock", "tray"]
+  "topics": ["shell", "dock", "tray"],
+  "topic_versions": {
+    "shell": 7,
+    "dock": 19,
+    "tray": 4
+  }
 }
 ```
 
@@ -154,8 +144,6 @@ topic 与 `BsTopic` 一致：
 - `generation`：全局状态版本，每次任一 topic 变化时递增
 - `version`：topic 局部版本，仅该 topic 变化时递增
 
-前端可用它判断是否漏事件、是否需要重新拉快照。
-
 ## 断线重连流程
 
 1. 前端重连 socket
@@ -163,67 +151,9 @@ topic 与 `BsTopic` 一致：
 3. 发送 `subscribe`
 4. 用新的 `generation` / `topic_versions` 覆盖本地缓存
 
-v1 不保证离线事件回放；重连后的唯一恢复路径是重新拉完整快照。
+## 当前 core 落地状态
 
-## 命令参数约定
-
-### launch_app
-
-```json
-{ "op": "launch_app", "desktop_id": "org.mozilla.firefox.desktop" }
-```
-
-### activate_app
-
-```json
-{ "op": "activate_app", "app_key": "org.mozilla.firefox.desktop" }
-```
-
-### focus_window
-
-```json
-{ "op": "focus_window", "window_id": "42" }
-```
-
-### switch_workspace
-
-```json
-{ "op": "switch_workspace", "workspace_id": "7" }
-```
-
-### toggle_launchpad
-
-```json
-{ "op": "toggle_launchpad" }
-```
-
-### pin_app / unpin_app
-
-```json
-{ "op": "pin_app", "app_key": "org.telegram.desktop" }
-{ "op": "unpin_app", "app_key": "org.telegram.desktop" }
-```
-
-### tray_activate / tray_context_menu
-
-```json
-{ "op": "tray_activate", "item_id": "org.kde.StatusNotifierItem-1", "x": 1200, "y": 28 }
-{ "op": "tray_context_menu", "item_id": "org.kde.StatusNotifierItem-1", "x": 1200, "y": 28 }
-```
-
-## 错误码建议
-
-- `invalid_argument`
-- `unknown_command`
-- `unknown_topic`
-- `not_found`
-- `backend_unavailable`
-- `not_ready`
-- `internal_error`
-
-## 与 core 的对应关系
-
-- `BsTopic`：topic 枚举
-- `BsCommand`：命令枚举
-- `BsTopicSet`：订阅集合
-- `BsSnapshot.topic_generations[]`：topic 局部版本
+- `BsCommandRequest` 已作为命令参数对象进入 core，替代仅靠 `op` 和字符串探测的轻量结构
+- `snapshot` 已有最小 JSON 序列化壳子，可输出 `generation`、`topic_versions` 与按 topic 切分的 `state`
+- `subscribe` 已在 IPC server 内维持客户端订阅集合，并在 `StateStore` topic 变化时向对应客户端推送事件
+- 非 `snapshot` / `subscribe` 命令当前仍以 `ack + params` 形式回包，真实动作路由留待后续接入 service/backend

@@ -21,7 +21,7 @@ niri IPC/event-stream 作为唯一上游状态源，`bit_shelld` 做集中归并
 
 ## 本地 IPC 方案（v1）
 
-使用 Unix domain socket + JSON。
+使用 Unix domain socket + JSON。当前实现采用**长连接 + 单行 JSON**（一行一个 JSON 对象），`subscribe` 后服务端会保留订阅关系并按 topic 主动推送事件。
 
 订阅：
 
@@ -62,6 +62,8 @@ core/niri/
   niri_actions.c
 ```
 
-## 协议细节
+## 当前 core 落地状态
 
-本页只给出状态流总览；字段级 contract、版本语义和错误码见 `10-architecture/ipc-contract.md`。
+- `ipc_server` 已从纯 stub 推进到最小可用的 Unix socket skeleton
+- `snapshot` 请求已能返回真实的 `generation` / `topic_versions` 以及按 topic 切分的占位 `state`
+- `subscribe` 请求已可更新服务器侧订阅集合，并在 `StateStore` topic 变更时向订阅客户端主动发送 `event`

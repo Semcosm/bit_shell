@@ -8,18 +8,15 @@
 static BsShelldConfig
 bs_shelld_config_from_env(void) {
   BsShelldConfig config;
+  const char *ipc_socket_override = NULL;
 
   bs_shell_config_init_defaults(&config);
-  g_free(config.paths.niri_socket_path);
-  g_free(config.paths.ipc_socket_path);
-  g_free(config.paths.config_path);
-  g_free(config.paths.state_path);
 
-  config.paths.niri_socket_path = g_strdup(g_getenv("NIRI_SOCKET"));
-  config.paths.ipc_socket_path = g_strdup(g_getenv("BIT_SHELL_SOCKET"));
-  config.paths.config_path = g_strdup(g_get_user_config_dir());
-  config.paths.state_path = g_strdup(g_get_user_state_dir());
-  config.paths.applications_dir = NULL;
+  ipc_socket_override = g_getenv("BIT_SHELL_SOCKET");
+  if (ipc_socket_override != NULL && *ipc_socket_override != '\0') {
+    g_free(config.paths.ipc_socket_path);
+    config.paths.ipc_socket_path = g_strdup(ipc_socket_override);
+  }
 
   return config;
 }

@@ -157,3 +157,53 @@ bs_topic_set_count(const BsTopicSet *set) {
 
   return count;
 }
+
+char *
+bs_topic_set_to_json(const BsTopicSet *set) {
+  GString *json = g_string_new("[");
+  bool first = true;
+
+  if (set != NULL) {
+    for (int topic = 0; topic < BS_TOPIC_COUNT; topic++) {
+      if (!set->values[topic]) {
+        continue;
+      }
+
+      if (!first) {
+        g_string_append(json, ",");
+      }
+      g_string_append_printf(json, "\"%s\"", bs_topic_to_string((BsTopic) topic));
+      first = false;
+    }
+  }
+
+  g_string_append(json, "]");
+  return g_string_free(json, false);
+}
+
+void
+bs_command_request_init(BsCommandRequest *request) {
+  g_return_if_fail(request != NULL);
+  memset(request, 0, sizeof(*request));
+  request->command = BS_COMMAND_INVALID;
+  request->x = BS_IPC_COORD_UNSET;
+  request->y = BS_IPC_COORD_UNSET;
+  bs_topic_set_clear(&request->topics);
+}
+
+void
+bs_command_request_clear(BsCommandRequest *request) {
+  if (request == NULL) {
+    return;
+  }
+
+  g_clear_pointer(&request->desktop_id, g_free);
+  g_clear_pointer(&request->app_key, g_free);
+  g_clear_pointer(&request->window_id, g_free);
+  g_clear_pointer(&request->workspace_id, g_free);
+  g_clear_pointer(&request->item_id, g_free);
+  request->command = BS_COMMAND_INVALID;
+  request->x = BS_IPC_COORD_UNSET;
+  request->y = BS_IPC_COORD_UNSET;
+  bs_topic_set_clear(&request->topics);
+}

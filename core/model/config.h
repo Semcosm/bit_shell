@@ -55,6 +55,7 @@ const char *bs_dock_display_mode_to_string(BsDockDisplayMode mode);
 bool bs_dock_display_mode_from_string(const char *value, BsDockDisplayMode *mode_out);
 
 void bs_runtime_paths_init(BsRuntimePaths *paths);
+void bs_runtime_paths_init_user_defaults(BsRuntimePaths *paths);
 void bs_runtime_paths_clear(BsRuntimePaths *paths);
 void bs_runtime_paths_copy(BsRuntimePaths *dst, const BsRuntimePaths *src);
 
