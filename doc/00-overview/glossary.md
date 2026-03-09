@@ -8,3 +8,5 @@
 - `Desktop Menu`：应用分类与菜单组织模型。
 - `StatusNotifierItem`：现代托盘图标与菜单协议。
 - `systemd --user`：用户级服务管理器。
+- `namespace`：layer-shell surface 的稳定命名，用于 niri layer rules、调试与跨文档引用。
+- 公共命名常量清单：见 `00-overview/constants.md`。

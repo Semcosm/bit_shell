@@ -14,7 +14,7 @@
 
 ## layer rules 与 namespace
 
-建议固定 namespace：
+建议固定 namespace（以 `00-overview/constants.md` 为唯一登记源）：
 
 - `bit-bar`
 - `bit-dock`

@@ -12,6 +12,7 @@ doc/
 ├─ 00-overview/
 │  ├─ project-scope.md
 │  ├─ glossary.md
+│  ├─ constants.md
 │  └─ roadmap.md
 ├─ 10-architecture/
 │  ├─ system-architecture.md
@@ -40,12 +41,13 @@ doc/
 ## 建议阅读顺序
 
 1. `00-overview/project-scope.md`
-2. `10-architecture/system-architecture.md`
-3. `10-architecture/event-and-state-flow.md`
-4. `40-ui/layer-shell-surfaces.md`
-5. `20-components/*.md`
-6. `50-models/*.md`
-7. `60-runtime/*.md`
-8. `00-overview/roadmap.md`
+2. `00-overview/constants.md`
+3. `10-architecture/system-architecture.md`
+4. `10-architecture/event-and-state-flow.md`
+5. `40-ui/layer-shell-surfaces.md`
+6. `20-components/*.md`
+7. `50-models/*.md`
+8. `60-runtime/*.md`
+9. `00-overview/roadmap.md`
 
 - 参考链接：`00-overview/references.md`
