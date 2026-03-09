@@ -4,14 +4,25 @@
 #include <gio/gio.h>
 #include <stdbool.h>
 
+#include "model/ipc.h"
+
 struct _BsShelldApp;
 typedef struct _BsShelldApp BsShelldApp;
 
 typedef struct _BsCommandRouter BsCommandRouter;
 
+typedef struct {
+  BsCommand command;
+  BsTopicSet topics;
+} BsIpcRequest;
+
 BsCommandRouter *bs_command_router_new(BsShelldApp *app);
 void bs_command_router_free(BsCommandRouter *router);
 
+bool bs_command_router_parse_request(BsCommandRouter *router,
+                                     const char *payload,
+                                     BsIpcRequest *request,
+                                     GError **error);
 bool bs_command_router_handle_json(BsCommandRouter *router,
                                    const char *payload,
                                    char **response_json,

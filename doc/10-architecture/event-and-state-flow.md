@@ -61,3 +61,7 @@ core/niri/
   niri_apply.c
   niri_actions.c
 ```
+
+## 协议细节
+
+本页只给出状态流总览；字段级 contract、版本语义和错误码见 `10-architecture/ipc-contract.md`。

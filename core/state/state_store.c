@@ -10,16 +10,6 @@ struct _BsStateStore {
   gpointer observer_user_data;
 };
 
-static void
-bs_hash_table_destroy_value(gpointer value) {
-  g_free(value);
-}
-
-static GHashTable *
-bs_hash_table_new_string_map(void) {
-  return g_hash_table_new_full(g_str_hash, g_str_equal, g_free, bs_hash_table_destroy_value);
-}
-
 void
 bs_window_clear(BsWindow *window) {
   if (window == NULL) {
@@ -73,43 +63,6 @@ bs_dock_item_clear(BsDockItem *dock_item) {
   }
 }
 
-const char *
-bs_topic_to_string(BsTopic topic) {
-  switch (topic) {
-    case BS_TOPIC_SHELL: return "shell";
-    case BS_TOPIC_WINDOWS: return "windows";
-    case BS_TOPIC_WORKSPACES: return "workspaces";
-    case BS_TOPIC_DOCK: return "dock";
-    case BS_TOPIC_TRAY: return "tray";
-    case BS_TOPIC_SETTINGS: return "settings";
-    default: return "unknown";
-  }
-}
-
-void
-bs_snapshot_init(BsSnapshot *snapshot) {
-  g_return_if_fail(snapshot != NULL);
-  snapshot->generation = 0;
-  snapshot->windows = bs_hash_table_new_string_map();
-  snapshot->workspaces = bs_hash_table_new_string_map();
-  snapshot->outputs = bs_hash_table_new_string_map();
-  snapshot->apps = bs_hash_table_new_string_map();
-  snapshot->dock_items = bs_hash_table_new_string_map();
-}
-
-void
-bs_snapshot_clear(BsSnapshot *snapshot) {
-  if (snapshot == NULL) {
-    return;
-  }
-  g_clear_pointer(&snapshot->windows, g_hash_table_unref);
-  g_clear_pointer(&snapshot->workspaces, g_hash_table_unref);
-  g_clear_pointer(&snapshot->outputs, g_hash_table_unref);
-  g_clear_pointer(&snapshot->apps, g_hash_table_unref);
-  g_clear_pointer(&snapshot->dock_items, g_hash_table_unref);
-  snapshot->generation = 0;
-}
-
 BsStateStore *
 bs_state_store_new(void) {
   BsStateStore *store = g_new0(BsStateStore, 1);
@@ -147,11 +100,20 @@ bs_state_store_generation(const BsStateStore *store) {
   return store->snapshot.generation;
 }
 
+uint64_t
+bs_state_store_topic_generation(const BsStateStore *store, BsTopic topic) {
+  g_return_val_if_fail(store != NULL, 0);
+  return bs_snapshot_topic_generation(&store->snapshot, topic);
+}
+
 void
 bs_state_store_mark_topic_changed(BsStateStore *store, BsTopic topic) {
   g_return_if_fail(store != NULL);
+  g_return_if_fail(topic >= 0 && topic < BS_TOPIC_COUNT);
 
   store->snapshot.generation += 1;
+  store->snapshot.topic_generations[topic] += 1;
+
   if (store->observer != NULL) {
     store->observer(store, topic, store->observer_user_data);
   }

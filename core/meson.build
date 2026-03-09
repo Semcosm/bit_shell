@@ -1,6 +1,9 @@
 core_includes = include_directories('.')
 
 bit_shelld_sources = files(
+  'model/ipc.c',
+  'model/config.c',
+  'model/snapshot.c',
   'shelld/main.c',
   'shelld/app.c',
   'shelld/command_router.c',

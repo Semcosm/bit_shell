@@ -16,7 +16,8 @@ doc/
 │  └─ roadmap.md
 ├─ 10-architecture/
 │  ├─ system-architecture.md
-│  └─ event-and-state-flow.md
+│  ├─ event-and-state-flow.md
+│  └─ ipc-contract.md
 ├─ 20-components/
 │  ├─ bit_shelld.md
 │  ├─ bit_bar.md
@@ -30,10 +31,12 @@ doc/
 │  └─ interaction-and-layout.md
 ├─ 50-models/
 │  ├─ desktop-entry-and-menu.md
+│  ├─ app-window-matching.md
 │  └─ status-notifier-item.md
 ├─ 60-runtime/
 │  ├─ systemd-user-services.md
-│  └─ niri-session-lifecycle.md
+│  ├─ niri-session-lifecycle.md
+│  └─ config-and-state.md
 └─ 90-adr/
    └─ ADR-0001-doc-structure.md
 ```
@@ -44,10 +47,11 @@ doc/
 2. `00-overview/constants.md`
 3. `10-architecture/system-architecture.md`
 4. `10-architecture/event-and-state-flow.md`
-5. `40-ui/layer-shell-surfaces.md`
-6. `20-components/*.md`
-7. `50-models/*.md`
-8. `60-runtime/*.md`
-9. `00-overview/roadmap.md`
+5. `10-architecture/ipc-contract.md`
+6. `40-ui/layer-shell-surfaces.md`
+7. `20-components/*.md`
+8. `50-models/*.md`
+9. `60-runtime/*.md`
+10. `00-overview/roadmap.md`
 
 - 参考链接：`00-overview/references.md`

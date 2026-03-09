@@ -1,7 +1,6 @@
 #include "shelld/app.h"
 
 #include <glib.h>
-#include <string.h>
 
 struct _BsShelldApp {
   BsShelldConfig config;
@@ -19,33 +18,6 @@ struct _BsShelldApp {
   bool running;
 };
 
-static char *
-bs_strdup_or_null(const char *value) {
-  return value != NULL ? g_strdup(value) : NULL;
-}
-
-static void
-bs_shelld_config_copy(BsShelldConfig *dst, const BsShelldConfig *src) {
-  memset(dst, 0, sizeof(*dst));
-  dst->niri_socket_path = bs_strdup_or_null(src->niri_socket_path);
-  dst->ipc_socket_path = bs_strdup_or_null(src->ipc_socket_path);
-  dst->config_path = bs_strdup_or_null(src->config_path);
-  dst->state_path = bs_strdup_or_null(src->state_path);
-  dst->applications_dir = bs_strdup_or_null(src->applications_dir);
-  dst->tray_watcher_name = bs_strdup_or_null(src->tray_watcher_name);
-  dst->auto_reconnect_niri = src->auto_reconnect_niri;
-}
-
-static void
-bs_shelld_config_clear(BsShelldConfig *config) {
-  g_free((char *) config->niri_socket_path);
-  g_free((char *) config->ipc_socket_path);
-  g_free((char *) config->config_path);
-  g_free((char *) config->state_path);
-  g_free((char *) config->applications_dir);
-  g_free((char *) config->tray_watcher_name);
-}
-
 BsShelldApp *
 bs_shelld_app_new(const BsShelldConfig *config) {
   BsShelldApp *app = g_new0(BsShelldApp, 1);
@@ -55,16 +27,21 @@ bs_shelld_app_new(const BsShelldConfig *config) {
   BsSettingsServiceConfig settings_config = {0};
   BsIpcServerConfig ipc_config = {0};
 
-  bs_shelld_config_copy(&app->config, config);
+  bs_shell_config_init_defaults(&app->config);
+  if (config != NULL) {
+    bs_shell_config_clear(&app->config);
+    bs_shell_config_copy(&app->config, config);
+  }
+
   app->main_loop = g_main_loop_new(NULL, false);
   app->state_store = bs_state_store_new();
 
-  niri_config.socket_path = app->config.niri_socket_path;
+  niri_config.socket_path = app->config.paths.niri_socket_path;
   niri_config.auto_reconnect = app->config.auto_reconnect_niri;
   app->niri_backend = bs_niri_backend_new(app->state_store, &niri_config);
 
   app_registry_config.watch_desktop_entries = true;
-  app_registry_config.applications_dir = app->config.applications_dir;
+  app_registry_config.applications_dir = app->config.paths.applications_dir;
   app->app_registry = bs_app_registry_new(app->state_store, &app_registry_config);
 
   app->workspace_service = bs_workspace_service_new(app->state_store);
@@ -74,13 +51,13 @@ bs_shelld_app_new(const BsShelldConfig *config) {
   tray_config.watcher_name = app->config.tray_watcher_name;
   app->tray_service = bs_tray_service_new(app->state_store, &tray_config);
 
-  settings_config.config_path = app->config.config_path;
-  settings_config.state_path = app->config.state_path;
+  settings_config.config_path = app->config.paths.config_path;
+  settings_config.state_path = app->config.paths.state_path;
   app->settings_service = bs_settings_service_new(app->state_store, &settings_config);
 
   app->command_router = bs_command_router_new(app);
 
-  ipc_config.socket_path = app->config.ipc_socket_path;
+  ipc_config.socket_path = app->config.paths.ipc_socket_path;
   app->ipc_server = bs_ipc_server_new(app, &ipc_config);
 
   return app;
@@ -108,7 +85,7 @@ bs_shelld_app_free(BsShelldApp *app) {
     g_main_loop_unref(app->main_loop);
   }
 
-  bs_shelld_config_clear(&app->config);
+  bs_shell_config_clear(&app->config);
   g_free(app);
 }
 
@@ -198,4 +175,10 @@ BsCommandRouter *
 bs_shelld_app_command_router(BsShelldApp *app) {
   g_return_val_if_fail(app != NULL, NULL);
   return app->command_router;
+}
+
+const BsShelldConfig *
+bs_shelld_app_config(const BsShelldApp *app) {
+  g_return_val_if_fail(app != NULL, NULL);
+  return &app->config;
 }

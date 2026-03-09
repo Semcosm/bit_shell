@@ -2,19 +2,24 @@
 #include <glib.h>
 #include <stdlib.h>
 
+#include "model/config.h"
 #include "shelld/app.h"
 
 static BsShelldConfig
 bs_shelld_config_from_env(void) {
-  BsShelldConfig config = {
-    .niri_socket_path = g_getenv("NIRI_SOCKET"),
-    .ipc_socket_path = g_getenv("BIT_SHELL_SOCKET"),
-    .config_path = g_get_user_config_dir(),
-    .state_path = g_get_user_state_dir(),
-    .applications_dir = NULL,
-    .tray_watcher_name = "org.kde.StatusNotifierWatcher",
-    .auto_reconnect_niri = true,
-  };
+  BsShelldConfig config;
+
+  bs_shell_config_init_defaults(&config);
+  g_free(config.paths.niri_socket_path);
+  g_free(config.paths.ipc_socket_path);
+  g_free(config.paths.config_path);
+  g_free(config.paths.state_path);
+
+  config.paths.niri_socket_path = g_strdup(g_getenv("NIRI_SOCKET"));
+  config.paths.ipc_socket_path = g_strdup(g_getenv("BIT_SHELL_SOCKET"));
+  config.paths.config_path = g_strdup(g_get_user_config_dir());
+  config.paths.state_path = g_strdup(g_get_user_state_dir());
+  config.paths.applications_dir = NULL;
 
   return config;
 }
@@ -28,6 +33,7 @@ main(void) {
 
   if (app == NULL) {
     g_printerr("[bit_shelld] failed to allocate application context\n");
+    bs_shell_config_clear(&config);
     return EXIT_FAILURE;
   }
 
@@ -37,5 +43,6 @@ main(void) {
   }
 
   bs_shelld_app_free(app);
+  bs_shell_config_clear(&config);
   return exit_code;
 }

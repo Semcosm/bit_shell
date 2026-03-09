@@ -4,6 +4,7 @@
 #include <glib.h>
 #include <stdbool.h>
 
+#include "model/ipc.h"
 #include "model/snapshot.h"
 
 typedef struct _BsStateStore BsStateStore;
@@ -18,6 +19,7 @@ void bs_state_store_set_observer(BsStateStore *store,
 
 BsSnapshot *bs_state_store_snapshot(BsStateStore *store);
 uint64_t bs_state_store_generation(const BsStateStore *store);
+uint64_t bs_state_store_topic_generation(const BsStateStore *store, BsTopic topic);
 
 void bs_state_store_mark_topic_changed(BsStateStore *store, BsTopic topic);
 
