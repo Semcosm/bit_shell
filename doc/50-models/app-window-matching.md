@@ -17,11 +17,17 @@
 ## 主键约定
 
 - 应用主键：`app_key`
-- 首选值：`desktop_id`
-- 次选值：`app_id`
-- 回退值：稳定归一化字符串
+- 规范值：`desktop_id`
+- 回退匹配：`app_id`
+- 最终兜底：稳定归一化字符串
 
 dock item 以 `app_key` 聚合，而不是以 `window_id` 聚合。
+
+v1 约定：
+
+- 一旦某 app 可解析出 `desktop_id`，该值就是唯一稳定主键
+- `app_id` 只用于把尚未拿到 `desktop_id` 映射的窗口临时归并到 app
+- pinned/favorites/recent apps 不应长期存储 `app_id`
 
 ## 特殊情况
 

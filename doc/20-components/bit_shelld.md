@@ -47,7 +47,11 @@
 - 已实现：`snapshot` / `subscribe` 的完整 IPC 闭环，含 topic 版本与事件推送。
 - 已实现：`NiriBackend` 事件消费、状态映射、断线重连与 degraded 状态上报。
 - 已实现：`shell/windows/workspaces` 三个 topic 的真实 payload 生成。
-- 未实现：业务命令（如 `focus_window` / `switch_workspace`）真实路由执行；当前仍返回 `ack + todo`。
+- 已实现：`AppRegistry` 基于 `GAppInfo/GDesktopAppInfo` 的可见应用索引，含 `desktop_id` 主键与 `app_id/startup_wm_class` 回退别名。
+- 已实现：`DockService` 的 `pinned + running` 聚合，`dock` topic 已输出真实 item 列表与顺序信息。
+- 已实现：`state.json` 中 `pinned_apps` 的读取与写回，并驱动 dock 聚合。
+- 已实现：`focus_window` / `switch_workspace` / `activate_app` / `launch_app` / `pin_app` / `unpin_app` 的最小真实路由执行。
+- 未实现：`toggle_launchpad` / tray 命令等业务动作的真实执行链路。
 
 ## 关键内部模块
 

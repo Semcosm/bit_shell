@@ -77,7 +77,7 @@
 - `workspace_id` 由 niri 决定。
 - `local_index` 只在单输出内有效。
 - dock 以 app 聚合而不是窗口平铺。
-- `window -> app` 映射优先使用 `desktop_id/app_id`。
+- `window -> app` 映射以 `desktop_id` 为主，`app_id` 仅作回退匹配。
 
 ## 核心模块职责
 

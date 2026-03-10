@@ -62,9 +62,10 @@
 
 - `BsSettingsService.load()` 会确保 `config.toml` 与 `state.json` 的父目录存在（使用 `0700` 创建）。
 - 若文件缺失，core 会写入一份 stub 文件。
-- `load()` 会读取文件内容并打印“parser TODO”日志，但当前不会把 TOML/JSON 字段解析并回填到内存配置。
-- `load()` 完成后会标记 `BS_TOPIC_SETTINGS` 变化。
-- `flush()` 会重写 `state.json`，内容包含 `generation`、`settings_dirty` 以及四个列表字段。
+- `load()` 当前仍不会解析 `config.toml` 字段，但已会解析 `state.json.pinned_apps` 并回填到内存状态。
+- `pinned_apps` 当前已驱动 `DockService` 的 pinned + running 聚合。
+- `pin_app` / `unpin_app` 命令当前会立即触发一次 `flush()`。
+- `flush()` 会按当前内存状态重写 `state.json`，其中 `pinned_apps` 为真实内容，其余列表仍是占位结构。
 
 ## 当前 stub 文件形态
 
@@ -99,7 +100,7 @@ max_recent_apps = 12
 show_categories = true
 ```
 
-`state.json`（当前 flush 输出结构）：
+`state.json`（当前 flush 输出结构；`pinned_apps` 为真实内容）：
 
 ```json
 {
@@ -115,4 +116,4 @@ show_categories = true
 ## 当前边界
 
 - 配置读取目前只打通 I/O 路径，不具备字段级解析与校验。
-- 运行时状态写回目前是最小结构，尚未与 dock/launchpad 的真实业务状态联动。
+- `recent_apps` / `favorites` / `recent_workspaces` 仍未解析，也尚未与 launchpad 等业务状态联动。

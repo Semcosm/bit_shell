@@ -6,9 +6,21 @@
 
 ## 主键策略
 
-- 首选：`desktop_id`
-- 次选：`app_id`
-- 再次选：归一化 `exec/name`
+- 规范主键：`desktop_id`
+- 临时回退匹配：`app_id`
+- 最终兜底：归一化 `exec/name`
+
+v1 中：
+
+- 启动应用必须依赖 `desktop_id`
+- pinned/favorites/recent apps 应持久化 `desktop_id`
+- `app_id` 只用于窗口归类和映射补全，不作为长期主键
+
+## 当前 core 落地状态
+
+- `AppRegistry` 当前通过 `GAppInfo.get_all()` 建立应用索引，而不是手写 desktop 文件扫描器
+- 当前会保留 `desktop_id`、名称、图标，并建立 `desktop_id` / basename / `startup_wm_class` 的别名映射
+- 当前尚未把 `categories` / `keywords` / menu tree 暴露给前端 IPC；这部分留给 launchpad 阶段
 
 ## 应用对象（建议）
 

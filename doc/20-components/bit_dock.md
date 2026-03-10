@@ -25,3 +25,30 @@
 2. 已运行未聚焦：聚焦最近使用窗口。
 3. 已聚焦单窗口：保持不变（最小化语义后续再定）。
 4. 已聚焦多窗口：循环或弹菜单。
+
+## 主键约定
+
+- dock item 的应用主键在 v1 中应稳定使用 `desktop_id`
+- 仅当窗口缺少 `desktop_id` 时，core 才回退到 `app_id` 做归并匹配
+
+## 当前 core 输出
+
+`dock` topic 当前已输出真实 item 列表，至少包含：
+
+- `app_key`
+- `desktop_id`
+- `name`
+- `icon_name`
+- `pinned`
+- `running`
+- `focused`
+- `pinned_index`
+- `last_focus_ts`
+- `window_ids`
+
+排序规则当前为：
+
+1. pinned item 按 `pinned_index`
+2. running only item 按 `focused` / `last_focus_ts`
+
+当前 backend 已支持通过 `pin_app` / `unpin_app` 命令修改 pinned 状态，并立即同步到 `state.json`。

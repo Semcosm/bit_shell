@@ -41,7 +41,8 @@ niri IPC/event-stream 是 `bit_shell` 的唯一状态上游。
 ## 当前边界
 
 - `bs_niri_backend_request_initial_snapshot()` 与 `bs_niri_backend_subscribe_event_stream()` 仍保留兼容接口，但当前为 no-op。
-- 用户动作转译为 niri 命令（如切换工作区、聚焦窗口）尚未接入真实执行链路。
+- `switch_workspace` / `focus_window` 已接入真实 niri action 请求。
+- 应用启动目前通过 Desktop Entry 启动；`toggle_launchpad` / tray 命令等动作仍未接入真实执行链路。
 
 ## 设计收益
 

@@ -50,6 +50,13 @@ topic 与 `BsTopic` 一致：
 - `tray_activate`
 - `tray_context_menu`
 
+参数约定：
+
+- `launch_app.desktop_id` 必须传 `.desktop` 文件 ID
+- `activate_app.app_key` 在 v1 中应传 `desktop_id`
+- `pin_app.app_key` / `unpin_app.app_key` 在 v1 中也应传 `desktop_id`
+- 仅当窗口缺少 `desktop_id` 映射时，core 才会回退使用 `app_id` 做窗口匹配
+
 ## 基本信封格式
 
 ### 请求
@@ -179,7 +186,20 @@ topic 与 `BsTopic` 一致：
   "version": 19,
   "generation": 42,
   "payload": {
-    "items": []
+    "items": [
+      {
+        "app_key": "org.mozilla.firefox.desktop",
+        "desktop_id": "org.mozilla.firefox.desktop",
+        "name": "Firefox",
+        "icon_name": "firefox",
+        "pinned": true,
+        "running": true,
+        "focused": false,
+        "pinned_index": 0,
+        "last_focus_ts": 1730000000000000000,
+        "window_ids": ["118", "132"]
+      }
+    ]
   }
 }
 ```
@@ -203,7 +223,9 @@ topic 与 `BsTopic` 一致：
 
 ## 当前 core 落地状态
 
-- `snapshot` 已输出真实 topic 结构：`shell/windows/workspaces` 为完整结构，`dock/tray/settings` 为最小可用结构
+- `snapshot` 已输出真实 topic 结构：`shell/windows/workspaces/dock` 为完整结构，`settings` 已包含 `pinned_apps`，`tray` 仍为最小结构
 - `subscribe` 已在 IPC server 内维持客户端订阅集合，并在 `StateStore` topic 变化时向对应客户端推送 `event`
 - `StateStore` 支持批量更新事务（begin/finish），可在一次提交中原子推进多 topic 版本
-- 非 `snapshot` / `subscribe` 命令当前仍以 `ack + params + todo` 形式回包，真实动作路由仍待接入
+- `switch_workspace`、`focus_window`、`activate_app`、`launch_app`、`pin_app`、`unpin_app` 已接入真实执行链路
+- `pin_app` / `unpin_app` 当前会更新内存状态并立即 flush 到 `state.json`
+- 其余命令当前仍以 `ack + params + todo` 形式回包

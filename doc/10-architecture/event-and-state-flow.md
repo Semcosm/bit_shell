@@ -44,6 +44,12 @@ niri IPC/event-stream 作为唯一上游状态源，`bit_shelld` 做集中归并
 { "op": "toggle_launchpad" }
 ```
 
+说明：
+
+- `launch_app.desktop_id` 必须传 `.desktop` 文件 ID
+- `activate_app.app_key` 在 v1 中应传 `desktop_id`
+- 只有在窗口尚未建立 `desktop_id` 映射时，core 才会回退到 `app_id` 做匹配
+
 推送事件示例：
 
 ```json
@@ -83,4 +89,6 @@ core/niri/
 - `snapshot` 请求返回真实 `generation` / `topic_versions`，并返回按 topic 切分的实际 payload（不是占位壳）。
 - `subscribe` 已可更新服务器侧订阅集合，并在 `StateStore` topic 变更时向订阅客户端主动推送 `event`。
 - `NiriBackend` 已实现 event-stream 消费、状态应用、断线检测和自动重连。
-- 非 `snapshot` / `subscribe` 命令已完成参数解析，但执行仍为 `ack + todo` 占位。
+- `AppRegistry` / `SettingsService` / `DockService` 已形成 `visible apps + pinned_apps + running windows -> dock items` 的聚合链路。
+- `switch_workspace`、`focus_window`、`activate_app`、`launch_app`、`pin_app`、`unpin_app` 已接入最小真实执行链路。
+- `pin_app` / `unpin_app` 会立即落盘到 `state.json`；其余未实现命令仍为占位返回。
