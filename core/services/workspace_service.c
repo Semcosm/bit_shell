@@ -21,6 +21,6 @@ bs_workspace_service_free(BsWorkspaceService *service) {
 bool
 bs_workspace_service_rebuild(BsWorkspaceService *service, GError **error) {
   g_return_val_if_fail(service != NULL, false);
-  bs_state_store_mark_topic_changed(service->store, BS_TOPIC_WORKSPACES);
+  (void) error;
   return true;
 }

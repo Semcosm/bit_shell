@@ -7,11 +7,11 @@ niri IPC/event-stream 作为唯一上游状态源，`bit_shelld` 做集中归并
 ## 状态流
 
 1. `NiriBackend` 连接 `$NIRI_SOCKET`。
-2. 获取初始完整状态快照。
-3. 订阅并持续消费 event-stream 增量。
-4. 应用事件到 `StateStore`。
-5. 生成 topic 级别的 view model 变化。
-6. 通过本地 IPC 推送给 `bit_bar`/`bit_dock`/`bit_launchpad`。
+2. 启动时先拉取 `Outputs`，并建立 `EventStream` 长连接。
+3. 持续消费 event-stream 增量事件。
+4. 将事件应用到 `StateStore`。
+5. `StateStore` 在一次更新事务内聚合 topic 变化并提交版本。
+6. `IpcServer` 向订阅该 topic 的客户端推送 `event`。
 
 ## 为什么前端不直连 niri
 
@@ -47,9 +47,25 @@ niri IPC/event-stream 作为唯一上游状态源，`bit_shelld` 做集中归并
 推送事件示例：
 
 ```json
-{ "topic": "dock", "kind": "items_changed", "version": 18, "items": [] }
-{ "topic": "workspaces", "kind": "snapshot", "version": 31, "outputs": [] }
+{
+  "kind": "event",
+  "topic": "workspaces",
+  "version": 31,
+  "generation": 77,
+  "payload": {
+    "outputs": [],
+    "workspaces": []
+  }
+}
 ```
+
+## 状态更新与版本推进
+
+- 更新通过 `bs_state_store_begin_update()` / `bs_state_store_finish_update()` 包裹。
+- 事务内可标记多个 topic 变化；提交时：
+- 每个变更 topic 的 `topic_version` 自增 1。
+- 若至少有一个 topic 变化，`generation` 自增 1。
+- 提交后按 topic 触发 observer，IPC 层据此发事件。
 
 ## backend 文件分层建议
 
@@ -64,6 +80,7 @@ core/niri/
 
 ## 当前 core 落地状态
 
-- `ipc_server` 已从纯 stub 推进到最小可用的 Unix socket skeleton
-- `snapshot` 请求已能返回真实的 `generation` / `topic_versions` 以及按 topic 切分的占位 `state`
-- `subscribe` 请求已可更新服务器侧订阅集合，并在 `StateStore` topic 变更时向订阅客户端主动发送 `event`
+- `snapshot` 请求返回真实 `generation` / `topic_versions`，并返回按 topic 切分的实际 payload（不是占位壳）。
+- `subscribe` 已可更新服务器侧订阅集合，并在 `StateStore` topic 变更时向订阅客户端主动推送 `event`。
+- `NiriBackend` 已实现 event-stream 消费、状态应用、断线检测和自动重连。
+- 非 `snapshot` / `subscribe` 命令已完成参数解析，但执行仍为 `ack + todo` 占位。

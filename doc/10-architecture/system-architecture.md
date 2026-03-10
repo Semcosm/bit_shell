@@ -70,7 +70,7 @@
 
 ## 统一内存模型
 
-建议模型对象：`BsWindow`、`BsWorkspace`、`BsOutput`、`BsAppState`、`BsDockItem`。
+建议模型对象：`BsShellState`、`BsWindow`、`BsWorkspace`、`BsOutput`、`BsAppState`、`BsDockItem`。
 
 关键约束：
 

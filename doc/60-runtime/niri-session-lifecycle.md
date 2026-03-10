@@ -3,14 +3,17 @@
 ## 启动
 
 - niri session 就绪后启动 `bit-shelld`
+- `bit-shelld` 会尝试连接 niri；若失败进入 degraded 模式但进程继续运行
 - 前端服务在 shell 后启动并订阅状态
 
 ## 运行期
 
 - 前端可独立崩溃与重启
-- 重连后先拉快照再接增量事件
+- 前端重连后先拉快照再接增量事件
+- niri event-stream 断开后，`bit-shelld` 会更新 `shell.niri_connected=false` 与 `degraded_reason`
+- 若启用自动重连，`bit-shelld` 会周期性重连 niri，成功后恢复 `shell.niri_connected=true`
 
 ## 退出
 
 - 会话结束时组件有序停止
-- 保证状态持久化与资源清理
+- `bit-shelld` 停止 IPC server、tray、niri backend，并执行设置状态落盘

@@ -91,6 +91,8 @@ bs_shelld_app_free(BsShelldApp *app) {
 
 bool
 bs_shelld_app_start(BsShelldApp *app, GError **error) {
+  g_autoptr(GError) niri_error = NULL;
+
   g_return_val_if_fail(app != NULL, false);
 
   if (!bs_settings_service_load(app->settings_service, error)) {
@@ -102,18 +104,6 @@ bs_shelld_app_start(BsShelldApp *app, GError **error) {
   }
 
   if (!bs_launcher_service_refresh(app->launcher_service, error)) {
-    return false;
-  }
-
-  if (!bs_niri_backend_start(app->niri_backend, error)) {
-    return false;
-  }
-
-  if (!bs_niri_backend_request_initial_snapshot(app->niri_backend, error)) {
-    return false;
-  }
-
-  if (!bs_niri_backend_subscribe_event_stream(app->niri_backend, error)) {
     return false;
   }
 
@@ -131,6 +121,13 @@ bs_shelld_app_start(BsShelldApp *app, GError **error) {
 
   if (!bs_ipc_server_start(app->ipc_server, error)) {
     return false;
+  }
+
+  if (!bs_niri_backend_start(app->niri_backend, &niri_error)) {
+    return false;
+  }
+  if (niri_error != NULL) {
+    g_warning("[bit_shelld] started with degraded niri backend: %s", niri_error->message);
   }
 
   app->running = true;

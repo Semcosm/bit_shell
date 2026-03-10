@@ -14,12 +14,11 @@
 ### bit_shelld 负责什么
 
 - 连接 niri socket
-- 获取初始状态 + 订阅 event-stream
+- 管理 event-stream 生命周期（连接、断线、重连、降级状态）
 - 维护统一内存状态树
 - 提供本地 IPC
 - 管理应用注册表与托盘注册表
 - 持久化配置与用户状态
-- 将前端动作转译为 niri action/内部命令
 - 对外提供统一的 snapshot / topic event 视图
 
 ### bit_shelld 不负责什么
@@ -31,7 +30,7 @@
 
 ## 输入
 
-- `niri IPC`：初始状态、event-stream、动作响应
+- `niri IPC`：`Outputs` 拉取、event-stream、连接状态变化
 - `Desktop Entry scan`：应用元数据、分类、动作、图标索引
 - `SNI registration`：托盘项注册、注销、状态变更与菜单请求
 - `config/state files`：静态配置、pinned apps、recent apps、用户状态
@@ -40,19 +39,15 @@
 ## 输出
 
 - `state snapshot`：给前端的完整一致性快照
-- `topic events`：按主题分发的增量事件，如 `windows`、`workspaces`、`dock`、`tray`
-- `launch/tray/menu actions`：应用启动、托盘激活、上下文菜单、shell 内部动作的执行结果
+- `topic events`：按主题分发的增量事件（`shell/windows/workspaces/dock/tray/settings`）
 - `persisted state`：更新后的 pinned、recents、favorites 与运行时状态落盘
 
-## 责任
+## 当前实现状态
 
-- 连接 niri socket
-- 获取初始状态 + 订阅 event-stream
-- 维护统一内存状态树
-- 提供本地 IPC
-- 管理应用注册表与托盘注册表
-- 持久化配置与用户状态
-- 将前端动作转译为 niri action/内部命令
+- 已实现：`snapshot` / `subscribe` 的完整 IPC 闭环，含 topic 版本与事件推送。
+- 已实现：`NiriBackend` 事件消费、状态映射、断线重连与 degraded 状态上报。
+- 已实现：`shell/windows/workspaces` 三个 topic 的真实 payload 生成。
+- 未实现：业务命令（如 `focus_window` / `switch_workspace`）真实路由执行；当前仍返回 `ack + todo`。
 
 ## 关键内部模块
 

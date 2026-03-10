@@ -5,10 +5,12 @@
 #include <stdint.h>
 
 #include "model/ipc.h"
+#include "model/types.h"
 
 typedef struct {
   uint64_t generation;
   uint64_t topic_generations[BS_TOPIC_COUNT];
+  BsShellState shell;
   GHashTable *windows;
   GHashTable *workspaces;
   GHashTable *outputs;

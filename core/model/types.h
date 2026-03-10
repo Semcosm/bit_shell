@@ -6,6 +6,15 @@
 #include <stdint.h>
 
 typedef struct {
+  bool niri_connected;
+  char *degraded_reason;
+  char *focused_output_name;
+  char *focused_workspace_id;
+  char *focused_window_id;
+  char *focused_window_title;
+} BsShellState;
+
+typedef struct {
   char *id;
   char *title;
   char *app_id;
@@ -54,6 +63,7 @@ typedef struct {
   uint64_t last_focus_ts;
 } BsDockItem;
 
+void bs_shell_state_clear(BsShellState *shell_state);
 void bs_window_clear(BsWindow *window);
 void bs_workspace_clear(BsWorkspace *workspace);
 void bs_output_clear(BsOutput *output);

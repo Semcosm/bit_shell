@@ -1,4 +1,4 @@
-# 本地 IPC 协议（v1 草案）
+# 本地 IPC 协议（v1）
 
 ## 目标
 
@@ -76,7 +76,7 @@ topic 与 `BsTopic` 一致：
 { "op": "snapshot" }
 ```
 
-成功响应示例：
+成功响应示例（字段形态与当前 core 实现一致）：
 
 ```json
 {
@@ -92,12 +92,54 @@ topic 与 `BsTopic` 一致：
     "settings": 3
   },
   "state": {
-    "shell": {},
-    "windows": [],
-    "workspaces": [],
-    "dock": [],
-    "tray": [],
-    "settings": {}
+    "shell": {
+      "niri_connected": true,
+      "degraded_reason": null,
+      "focused_output_name": "HDMI-A-1",
+      "focused_workspace_id": "2",
+      "focused_window_id": "118",
+      "focused_window_title": "Terminal"
+    },
+    "windows": {
+      "windows": [
+        {
+          "id": "118",
+          "title": "Terminal",
+          "app_id": "foot",
+          "desktop_id": "foot.desktop",
+          "workspace_id": "2",
+          "output_name": "HDMI-A-1",
+          "focused": true,
+          "floating": false,
+          "fullscreen": false,
+          "focus_ts": 1730000000000000000
+        }
+      ]
+    },
+    "workspaces": {
+      "outputs": [
+        {
+          "name": "HDMI-A-1",
+          "width": 1920,
+          "height": 1080,
+          "scale": 1.0,
+          "focused": true
+        }
+      ],
+      "workspaces": [
+        {
+          "id": "2",
+          "name": "2",
+          "output_name": "HDMI-A-1",
+          "focused": true,
+          "empty": false,
+          "local_index": 1
+        }
+      ]
+    },
+    "dock": { "items": [] },
+    "tray": { "items": [] },
+    "settings": { "config_loaded": true }
   }
 }
 ```
@@ -108,7 +150,7 @@ topic 与 `BsTopic` 一致：
 { "op": "subscribe", "topics": ["shell", "dock", "tray"] }
 ```
 
-响应示例：
+响应示例（当前实现返回全量 topic_versions）：
 
 ```json
 {
@@ -117,15 +159,18 @@ topic 与 `BsTopic` 一致：
   "topics": ["shell", "dock", "tray"],
   "topic_versions": {
     "shell": 7,
+    "windows": 42,
+    "workspaces": 13,
     "dock": 19,
-    "tray": 4
+    "tray": 4,
+    "settings": 3
   }
 }
 ```
 
 ## 事件推送格式
 
-订阅建立后，服务端可主动推送：
+订阅建立后，服务端会在对应 topic 变化时主动推送：
 
 ```json
 {
@@ -139,10 +184,15 @@ topic 与 `BsTopic` 一致：
 }
 ```
 
+说明：
+
+- `payload` 的结构与 `snapshot.state.<topic>` 一致。
+- 一个逻辑更新可同时触发多个 topic；这些事件可能共享同一 `generation`，但各自 `version` 独立递增。
+
 ### 版本语义
 
-- `generation`：全局状态版本，每次任一 topic 变化时递增
-- `version`：topic 局部版本，仅该 topic 变化时递增
+- `generation`：全局状态版本，只要本次更新有任一 topic 变化就递增
+- `version`：topic 局部版本，仅该 topic 在本次更新被标记变化时递增
 
 ## 断线重连流程
 
@@ -153,7 +203,7 @@ topic 与 `BsTopic` 一致：
 
 ## 当前 core 落地状态
 
-- `BsCommandRequest` 已作为命令参数对象进入 core，替代仅靠 `op` 和字符串探测的轻量结构
-- `snapshot` 已有最小 JSON 序列化壳子，可输出 `generation`、`topic_versions` 与按 topic 切分的 `state`
-- `subscribe` 已在 IPC server 内维持客户端订阅集合，并在 `StateStore` topic 变化时向对应客户端推送事件
-- 非 `snapshot` / `subscribe` 命令当前仍以 `ack + params` 形式回包，真实动作路由留待后续接入 service/backend
+- `snapshot` 已输出真实 topic 结构：`shell/windows/workspaces` 为完整结构，`dock/tray/settings` 为最小可用结构
+- `subscribe` 已在 IPC server 内维持客户端订阅集合，并在 `StateStore` topic 变化时向对应客户端推送 `event`
+- `StateStore` 支持批量更新事务（begin/finish），可在一次提交中原子推进多 topic 版本
+- 非 `snapshot` / `subscribe` 命令当前仍以 `ack + params + todo` 形式回包，真实动作路由仍待接入

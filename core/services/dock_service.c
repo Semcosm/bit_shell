@@ -21,6 +21,6 @@ bs_dock_service_free(BsDockService *service) {
 bool
 bs_dock_service_rebuild(BsDockService *service, GError **error) {
   g_return_val_if_fail(service != NULL, false);
-  bs_state_store_mark_topic_changed(service->store, BS_TOPIC_DOCK);
+  (void) error;
   return true;
 }

@@ -22,6 +22,6 @@ executable(
   'bit_shelld',
   bit_shelld_sources,
   include_directories: core_includes,
-  dependencies: [glib_dep, gio_dep],
+  dependencies: [glib_dep, gio_dep, json_glib_dep],
   install: false,
 )

@@ -3,14 +3,73 @@
 #include <glib.h>
 #include <string.h>
 
+static void bs_hash_table_destroy_window(gpointer value);
+static void bs_hash_table_destroy_workspace(gpointer value);
+static void bs_hash_table_destroy_output(gpointer value);
+static void bs_hash_table_destroy_app_state(gpointer value);
+static void bs_hash_table_destroy_dock_item(gpointer value);
+static GHashTable *bs_hash_table_new_full_map(GDestroyNotify value_destroy);
+static void bs_json_append_quoted(GString *json, const char *value);
+static void bs_json_append_nullable_string(GString *json, const char *value);
+static GPtrArray *bs_hash_table_values_to_ptr_array(GHashTable *table);
+static gint bs_compare_string_ids(const char *lhs, const char *rhs);
+static gint bs_compare_workspace(gconstpointer lhs, gconstpointer rhs);
+static gint bs_compare_output(gconstpointer lhs, gconstpointer rhs);
+static gint bs_compare_window(gconstpointer lhs, gconstpointer rhs);
+
 static void
-bs_hash_table_destroy_value(gpointer value) {
-  g_free(value);
+bs_hash_table_destroy_window(gpointer value) {
+  BsWindow *window = value;
+  if (window == NULL) {
+    return;
+  }
+  bs_window_clear(window);
+  g_free(window);
+}
+
+static void
+bs_hash_table_destroy_workspace(gpointer value) {
+  BsWorkspace *workspace = value;
+  if (workspace == NULL) {
+    return;
+  }
+  bs_workspace_clear(workspace);
+  g_free(workspace);
+}
+
+static void
+bs_hash_table_destroy_output(gpointer value) {
+  BsOutput *output = value;
+  if (output == NULL) {
+    return;
+  }
+  bs_output_clear(output);
+  g_free(output);
+}
+
+static void
+bs_hash_table_destroy_app_state(gpointer value) {
+  BsAppState *app_state = value;
+  if (app_state == NULL) {
+    return;
+  }
+  bs_app_state_clear(app_state);
+  g_free(app_state);
+}
+
+static void
+bs_hash_table_destroy_dock_item(gpointer value) {
+  BsDockItem *dock_item = value;
+  if (dock_item == NULL) {
+    return;
+  }
+  bs_dock_item_clear(dock_item);
+  g_free(dock_item);
 }
 
 static GHashTable *
-bs_hash_table_new_string_map(void) {
-  return g_hash_table_new_full(g_str_hash, g_str_equal, g_free, bs_hash_table_destroy_value);
+bs_hash_table_new_full_map(GDestroyNotify value_destroy) {
+  return g_hash_table_new_full(g_str_hash, g_str_equal, g_free, value_destroy);
 }
 
 static void
@@ -21,37 +80,217 @@ bs_json_append_quoted(GString *json, const char *value) {
 }
 
 static void
-bs_json_append_object_id_array(GString *json, GHashTable *table, const char *field_name) {
-  GHashTableIter iter;
-  gpointer key = NULL;
-  bool first = true;
-
-  g_string_append(json, "[");
-  if (table != NULL) {
-    g_hash_table_iter_init(&iter, table);
-    while (g_hash_table_iter_next(&iter, &key, NULL)) {
-      if (!first) {
-        g_string_append(json, ",");
-      }
-      g_string_append(json, "{");
-      g_string_append_printf(json, "\"%s\":", field_name);
-      bs_json_append_quoted(json, (const char *) key);
-      g_string_append(json, "}");
-      first = false;
-    }
+bs_json_append_nullable_string(GString *json, const char *value) {
+  if (value == NULL) {
+    g_string_append(json, "null");
+    return;
   }
-  g_string_append(json, "]");
+  bs_json_append_quoted(json, value);
+}
+
+static GPtrArray *
+bs_hash_table_values_to_ptr_array(GHashTable *table) {
+  GPtrArray *values = g_ptr_array_new();
+  GHashTableIter iter;
+  gpointer value = NULL;
+
+  if (table == NULL) {
+    return values;
+  }
+
+  g_hash_table_iter_init(&iter, table);
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    g_ptr_array_add(values, value);
+  }
+
+  return values;
+}
+
+static gint
+bs_compare_string_ids(const char *lhs, const char *rhs) {
+  guint64 lhs_num = 0;
+  guint64 rhs_num = 0;
+  bool lhs_numeric = false;
+  bool rhs_numeric = false;
+  char *lhs_end = NULL;
+  char *rhs_end = NULL;
+
+  if (lhs == NULL && rhs == NULL) {
+    return 0;
+  }
+  if (lhs == NULL) {
+    return -1;
+  }
+  if (rhs == NULL) {
+    return 1;
+  }
+
+  lhs_num = g_ascii_strtoull(lhs, &lhs_end, 10);
+  rhs_num = g_ascii_strtoull(rhs, &rhs_end, 10);
+  lhs_numeric = lhs_end != NULL && *lhs_end == '\0';
+  rhs_numeric = rhs_end != NULL && *rhs_end == '\0';
+
+  if (lhs_numeric && rhs_numeric) {
+    if (lhs_num < rhs_num) {
+      return -1;
+    }
+    if (lhs_num > rhs_num) {
+      return 1;
+    }
+    return 0;
+  }
+
+  return g_strcmp0(lhs, rhs);
+}
+
+static gint
+bs_compare_workspace(gconstpointer lhs, gconstpointer rhs) {
+  const BsWorkspace *a = *(BsWorkspace * const *) lhs;
+  const BsWorkspace *b = *(BsWorkspace * const *) rhs;
+  gint cmp = 0;
+
+  cmp = g_strcmp0(a->output_name, b->output_name);
+  if (cmp != 0) {
+    return cmp;
+  }
+  if (a->local_index != b->local_index) {
+    return a->local_index < b->local_index ? -1 : 1;
+  }
+  return bs_compare_string_ids(a->id, b->id);
+}
+
+static gint
+bs_compare_output(gconstpointer lhs, gconstpointer rhs) {
+  const BsOutput *a = *(BsOutput * const *) lhs;
+  const BsOutput *b = *(BsOutput * const *) rhs;
+  return g_strcmp0(a->name, b->name);
+}
+
+static gint
+bs_compare_window(gconstpointer lhs, gconstpointer rhs) {
+  const BsWindow *a = *(BsWindow * const *) lhs;
+  const BsWindow *b = *(BsWindow * const *) rhs;
+
+  if (a->focused != b->focused) {
+    return a->focused ? -1 : 1;
+  }
+  if (a->focus_ts != b->focus_ts) {
+    return a->focus_ts > b->focus_ts ? -1 : 1;
+  }
+  return bs_compare_string_ids(a->id, b->id);
+}
+
+static void
+bs_json_append_shell_payload(GString *json, const BsSnapshot *snapshot) {
+  g_string_append(json, "{");
+  g_string_append_printf(json,
+                         "\"niri_connected\":%s,",
+                         snapshot->shell.niri_connected ? "true" : "false");
+  g_string_append(json, "\"degraded_reason\":");
+  bs_json_append_nullable_string(json, snapshot->shell.degraded_reason);
+  g_string_append(json, ",\"focused_output_name\":");
+  bs_json_append_nullable_string(json, snapshot->shell.focused_output_name);
+  g_string_append(json, ",\"focused_workspace_id\":");
+  bs_json_append_nullable_string(json, snapshot->shell.focused_workspace_id);
+  g_string_append(json, ",\"focused_window_id\":");
+  bs_json_append_nullable_string(json, snapshot->shell.focused_window_id);
+  g_string_append(json, ",\"focused_window_title\":");
+  bs_json_append_nullable_string(json, snapshot->shell.focused_window_title);
+  g_string_append(json, "}");
+}
+
+static void
+bs_json_append_windows_payload(GString *json, const BsSnapshot *snapshot) {
+  g_autoptr(GPtrArray) windows = bs_hash_table_values_to_ptr_array(snapshot->windows);
+
+  g_ptr_array_sort(windows, bs_compare_window);
+  g_string_append(json, "{\"windows\":[");
+  for (guint i = 0; i < windows->len; i++) {
+    const BsWindow *window = g_ptr_array_index(windows, i);
+    if (i > 0) {
+      g_string_append(json, ",");
+    }
+    g_string_append(json, "{");
+    g_string_append(json, "\"id\":");
+    bs_json_append_nullable_string(json, window->id);
+    g_string_append(json, ",\"title\":");
+    bs_json_append_nullable_string(json, window->title);
+    g_string_append(json, ",\"app_id\":");
+    bs_json_append_nullable_string(json, window->app_id);
+    g_string_append(json, ",\"desktop_id\":");
+    bs_json_append_nullable_string(json, window->desktop_id);
+    g_string_append(json, ",\"workspace_id\":");
+    bs_json_append_nullable_string(json, window->workspace_id);
+    g_string_append(json, ",\"output_name\":");
+    bs_json_append_nullable_string(json, window->output_name);
+    g_string_append_printf(json,
+                           ",\"focused\":%s,\"floating\":%s,\"fullscreen\":%s,\"focus_ts\":%" G_GUINT64_FORMAT,
+                           window->focused ? "true" : "false",
+                           window->floating ? "true" : "false",
+                           window->fullscreen ? "true" : "false",
+                           window->focus_ts);
+    g_string_append(json, "}");
+  }
+  g_string_append(json, "]}");
+}
+
+static void
+bs_json_append_workspaces_payload(GString *json, const BsSnapshot *snapshot) {
+  g_autoptr(GPtrArray) outputs = bs_hash_table_values_to_ptr_array(snapshot->outputs);
+  g_autoptr(GPtrArray) workspaces = bs_hash_table_values_to_ptr_array(snapshot->workspaces);
+
+  g_ptr_array_sort(outputs, bs_compare_output);
+  g_ptr_array_sort(workspaces, bs_compare_workspace);
+
+  g_string_append(json, "{\"outputs\":[");
+  for (guint i = 0; i < outputs->len; i++) {
+    const BsOutput *output = g_ptr_array_index(outputs, i);
+    if (i > 0) {
+      g_string_append(json, ",");
+    }
+    g_string_append(json, "{");
+    g_string_append(json, "\"name\":");
+    bs_json_append_nullable_string(json, output->name);
+    g_string_append_printf(json,
+                           ",\"width\":%d,\"height\":%d,\"scale\":%.3f,\"focused\":%s",
+                           output->width,
+                           output->height,
+                           output->scale,
+                           output->focused ? "true" : "false");
+    g_string_append(json, "}");
+  }
+  g_string_append(json, "],\"workspaces\":[");
+  for (guint i = 0; i < workspaces->len; i++) {
+    const BsWorkspace *workspace = g_ptr_array_index(workspaces, i);
+    if (i > 0) {
+      g_string_append(json, ",");
+    }
+    g_string_append(json, "{");
+    g_string_append(json, "\"id\":");
+    bs_json_append_nullable_string(json, workspace->id);
+    g_string_append(json, ",\"name\":");
+    bs_json_append_nullable_string(json, workspace->name);
+    g_string_append(json, ",\"output_name\":");
+    bs_json_append_nullable_string(json, workspace->output_name);
+    g_string_append_printf(json,
+                           ",\"focused\":%s,\"empty\":%s,\"local_index\":%d",
+                           workspace->focused ? "true" : "false",
+                           workspace->empty ? "true" : "false",
+                           workspace->local_index);
+    g_string_append(json, "}");
+  }
+  g_string_append(json, "]}");
 }
 
 void
 bs_snapshot_init(BsSnapshot *snapshot) {
   g_return_if_fail(snapshot != NULL);
   memset(snapshot, 0, sizeof(*snapshot));
-  snapshot->windows = bs_hash_table_new_string_map();
-  snapshot->workspaces = bs_hash_table_new_string_map();
-  snapshot->outputs = bs_hash_table_new_string_map();
-  snapshot->apps = bs_hash_table_new_string_map();
-  snapshot->dock_items = bs_hash_table_new_string_map();
+  snapshot->windows = bs_hash_table_new_full_map(bs_hash_table_destroy_window);
+  snapshot->workspaces = bs_hash_table_new_full_map(bs_hash_table_destroy_workspace);
+  snapshot->outputs = bs_hash_table_new_full_map(bs_hash_table_destroy_output);
+  snapshot->apps = bs_hash_table_new_full_map(bs_hash_table_destroy_app_state);
+  snapshot->dock_items = bs_hash_table_new_full_map(bs_hash_table_destroy_dock_item);
 }
 
 void
@@ -59,6 +298,7 @@ bs_snapshot_clear(BsSnapshot *snapshot) {
   if (snapshot == NULL) {
     return;
   }
+  bs_shell_state_clear(&snapshot->shell);
   g_clear_pointer(&snapshot->windows, g_hash_table_unref);
   g_clear_pointer(&snapshot->workspaces, g_hash_table_unref);
   g_clear_pointer(&snapshot->outputs, g_hash_table_unref);
@@ -103,24 +343,16 @@ bs_snapshot_serialize_topic_payload_json(const BsSnapshot *snapshot, BsTopic top
 
   switch (topic) {
     case BS_TOPIC_SHELL:
-      g_string_append(json, "{\"focused_app_key\":null,\"launchpad_visible\":false}");
+      bs_json_append_shell_payload(json, snapshot);
       break;
     case BS_TOPIC_WINDOWS:
-      g_string_append(json, "{\"windows\":");
-      bs_json_append_object_id_array(json, snapshot->windows, "id");
-      g_string_append(json, "}");
+      bs_json_append_windows_payload(json, snapshot);
       break;
     case BS_TOPIC_WORKSPACES:
-      g_string_append(json, "{\"workspaces\":");
-      bs_json_append_object_id_array(json, snapshot->workspaces, "id");
-      g_string_append(json, ",\"outputs\":");
-      bs_json_append_object_id_array(json, snapshot->outputs, "name");
-      g_string_append(json, "}");
+      bs_json_append_workspaces_payload(json, snapshot);
       break;
     case BS_TOPIC_DOCK:
-      g_string_append(json, "{\"items\":");
-      bs_json_append_object_id_array(json, snapshot->dock_items, "app_key");
-      g_string_append(json, "}");
+      g_string_append(json, "{\"items\":[]}");
       break;
     case BS_TOPIC_TRAY:
       g_string_append(json, "{\"items\":[]}");
