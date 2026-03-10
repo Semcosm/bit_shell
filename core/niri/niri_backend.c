@@ -237,6 +237,7 @@ bs_niri_backend_read_reply_line(GInputStream *input, GError **error) {
   g_return_val_if_fail(input != NULL, NULL);
 
   data_input = g_data_input_stream_new(input);
+  g_filter_input_stream_set_close_base_stream(G_FILTER_INPUT_STREAM(data_input), false);
   return g_data_input_stream_read_line(data_input, NULL, NULL, error);
 }
 
@@ -594,7 +595,7 @@ static bool
 bs_niri_backend_refresh_outputs(BsNiriBackend *backend, GError **error) {
   JsonNode *root = NULL;
   JsonObject *ok_object = NULL;
-  JsonArray *outputs_array = NULL;
+  JsonNode *outputs_node = NULL;
   g_autoptr(GPtrArray) outputs = NULL;
 
   g_return_val_if_fail(backend != NULL, false);
@@ -613,17 +614,55 @@ bs_niri_backend_refresh_outputs(BsNiriBackend *backend, GError **error) {
     return false;
   }
 
-  outputs_array = json_node_get_array(json_object_get_member(ok_object, "Outputs"));
   outputs = g_ptr_array_new_with_free_func(bs_niri_backend_free_output_ptr);
-  for (guint i = 0; i < json_array_get_length(outputs_array); i++) {
-    JsonObject *item = json_array_get_object_element(outputs_array, i);
-    BsOutput *output = g_new0(BsOutput, 1);
-    if (!bs_niri_backend_parse_output(item, output)) {
-      bs_output_clear(output);
-      g_free(output);
-      continue;
+  outputs_node = json_object_get_member(ok_object, "Outputs");
+  if (JSON_NODE_HOLDS_ARRAY(outputs_node)) {
+    JsonArray *outputs_array = json_node_get_array(outputs_node);
+
+    for (guint i = 0; i < json_array_get_length(outputs_array); i++) {
+      JsonObject *item = json_array_get_object_element(outputs_array, i);
+      BsOutput *output = g_new0(BsOutput, 1);
+      if (!bs_niri_backend_parse_output(item, output)) {
+        bs_output_clear(output);
+        g_free(output);
+        continue;
+      }
+      g_ptr_array_add(outputs, output);
     }
-    g_ptr_array_add(outputs, output);
+  } else if (JSON_NODE_HOLDS_OBJECT(outputs_node)) {
+    JsonObject *outputs_object = json_node_get_object(outputs_node);
+    JsonObjectIter iter;
+    const char *member_name = NULL;
+    JsonNode *member_node = NULL;
+
+    json_object_iter_init(&iter, outputs_object);
+    while (json_object_iter_next(&iter, &member_name, &member_node)) {
+      JsonObject *item = NULL;
+      BsOutput *output = NULL;
+
+      (void) member_name;
+      if (member_node == NULL || !JSON_NODE_HOLDS_OBJECT(member_node)) {
+        continue;
+      }
+
+      item = json_node_get_object(member_node);
+      output = g_new0(BsOutput, 1);
+      if (!bs_niri_backend_parse_output(item, output)) {
+        bs_output_clear(output);
+        g_free(output);
+        continue;
+      }
+      g_ptr_array_add(outputs, output);
+    }
+  } else {
+    g_set_error(error,
+                G_IO_ERROR,
+                G_IO_ERROR_INVALID_DATA,
+                "niri Outputs reply has unsupported Outputs payload type");
+    if (root != NULL) {
+      json_node_unref(root);
+    }
+    return false;
   }
 
   bs_state_store_begin_update(backend->store);
