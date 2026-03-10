@@ -34,6 +34,8 @@ typedef struct {
   GtkWidget *slot;
   GtkWidget *button;
   GtkWidget *indicator;
+  GtkWidget *icon_image;
+  GtkWidget *label;
   BsDockItemActionData *action;
 } BsDockItemWidgets;
 
@@ -428,7 +430,19 @@ bs_dock_app_create_item_widgets(BsDockApp *app, const BsDockItemView *item) {
 
   widgets->button = gtk_button_new();
   gtk_widget_add_css_class(widgets->button, "dock-item");
-  gtk_widget_set_size_request(widgets->button, 60, 60);
+  gtk_widget_set_size_request(widgets->button, 56, 56);
+
+  widgets->icon_image = gtk_image_new();
+  gtk_widget_add_css_class(widgets->icon_image, "dock-item-icon");
+  gtk_image_set_pixel_size(GTK_IMAGE(widgets->icon_image), 56);
+
+  widgets->label = gtk_label_new(NULL);
+  gtk_widget_add_css_class(widgets->label, "dock-item-label");
+  gtk_label_set_wrap(GTK_LABEL(widgets->label), true);
+  gtk_label_set_wrap_mode(GTK_LABEL(widgets->label), PANGO_WRAP_WORD_CHAR);
+  gtk_label_set_justify(GTK_LABEL(widgets->label), GTK_JUSTIFY_CENTER);
+  gtk_label_set_max_width_chars(GTK_LABEL(widgets->label), 6);
+  gtk_button_set_child(GTK_BUTTON(widgets->button), widgets->icon_image);
 
   widgets->indicator = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   gtk_widget_add_css_class(widgets->indicator, "dock-indicator");
@@ -481,11 +495,17 @@ bs_dock_app_update_item_widgets(BsDockApp *app,
 
   gtk_widget_set_tooltip_text(widgets->button, item->name != NULL ? item->name : item->app_key);
   if (item->icon_name != NULL && *item->icon_name != '\0') {
-    gtk_button_set_icon_name(GTK_BUTTON(widgets->button), item->icon_name);
+    gtk_image_set_from_icon_name(GTK_IMAGE(widgets->icon_image), item->icon_name);
+    gtk_image_set_pixel_size(GTK_IMAGE(widgets->icon_image), 56);
+    if (gtk_button_get_child(GTK_BUTTON(widgets->button)) != widgets->icon_image) {
+      gtk_button_set_child(GTK_BUTTON(widgets->button), widgets->icon_image);
+    }
   } else {
-    gtk_button_set_icon_name(GTK_BUTTON(widgets->button), NULL);
-    gtk_button_set_label(GTK_BUTTON(widgets->button),
-                         item->name != NULL ? item->name : item->app_key);
+    gtk_label_set_text(GTK_LABEL(widgets->label),
+                       item->name != NULL ? item->name : item->app_key);
+    if (gtk_button_get_child(GTK_BUTTON(widgets->button)) != widgets->label) {
+      gtk_button_set_child(GTK_BUTTON(widgets->button), widgets->label);
+    }
   }
 
   if (item->running) {
@@ -504,7 +524,9 @@ bs_dock_app_update_item_widgets(BsDockApp *app,
     gtk_widget_remove_css_class(widgets->button, "is-pinned");
   }
 
-  gtk_widget_set_size_request(widgets->indicator, item->focused ? 22 : 14, 4);
+  gtk_widget_set_size_request(widgets->indicator,
+                              item->focused ? 7 : 6,
+                              item->focused ? 7 : 6);
   if (!item->running) {
     gtk_widget_add_css_class(widgets->indicator, "is-hidden");
     gtk_widget_remove_css_class(widgets->indicator, "is-focused");
@@ -977,40 +999,70 @@ static void
 bs_dock_app_apply_css(void) {
   GtkCssProvider *provider = NULL;
   const char *css =
+    "window.bit-dock-window {"
+    "  background: transparent;"
+    "  box-shadow: none;"
+    "}"
     ".dock-root {"
-    "  padding: 14px 18px;"
-    "  border-radius: 22px;"
-    "  background: rgba(12, 18, 27, 0.88);"
-    "  border: 1px solid rgba(255, 255, 255, 0.08);"
+    "  padding: 10px 14px 8px 14px;"
+    "  border-radius: 24px;"
+    "  background: rgba(248, 248, 252, 0.82);"
+    "  border: 1px solid rgba(255, 255, 255, 0.22);"
+    "  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22),"
+    "              inset 0 1px 0 rgba(255, 255, 255, 0.18);"
+    "}"
+    ".dock-slot {"
+    "  margin-left: 1px;"
+    "  margin-right: 1px;"
     "}"
     ".dock-item {"
-    "  min-width: 60px;"
-    "  min-height: 60px;"
-    "  border-radius: 18px;"
-    "  background: rgba(255, 255, 255, 0.06);"
+    "  min-width: 56px;"
+    "  min-height: 56px;"
+    "  padding: 0;"
+    "  border-radius: 16px;"
+    "  border: 1px solid transparent;"
+    "  background: transparent;"
+    "  box-shadow: none;"
+    "}"
+    ".dock-item:hover {"
+    "  background: rgba(255, 255, 255, 0.10);"
+    "  border: 1px solid rgba(255, 255, 255, 0.10);"
+    "}"
+    ".dock-item-icon {"
+    "  color: rgba(24, 28, 34, 0.94);"
+    "}"
+    ".dock-item-label {"
+    "  color: rgba(24, 28, 34, 0.92);"
+    "  font-size: 11px;"
+    "  font-weight: 600;"
     "}"
     ".dock-item.is-running {"
-    "  background: rgba(78, 126, 255, 0.18);"
+    "  background: transparent;"
     "}"
     ".dock-item.is-focused {"
-    "  background: rgba(110, 170, 255, 0.32);"
+    "  background: rgba(255, 255, 255, 0.12);"
+    "  border: 1px solid rgba(255, 255, 255, 0.14);"
+    "  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);"
     "}"
     ".dock-item.is-pinned {"
-    "  background: rgba(255, 255, 255, 0.10);"
+    "  background: transparent;"
     "}"
     ".dock-indicator {"
-    "  min-height: 4px;"
+    "  min-width: 6px;"
+    "  min-height: 6px;"
     "  border-radius: 999px;"
-    "  background: rgba(255, 255, 255, 0.42);"
+    "  background: rgba(255, 255, 255, 0.72);"
     "}"
     ".dock-indicator.is-focused {"
-    "  background: rgba(156, 212, 255, 0.92);"
+    "  background: rgba(255, 255, 255, 0.96);"
     "}"
     ".dock-indicator.is-hidden {"
     "  opacity: 0.0;"
     "}"
     ".dock-status {"
-    "  color: rgba(255, 255, 255, 0.72);"
+    "  margin-top: 2px;"
+    "  color: rgba(255, 255, 255, 0.68);"
+    "  font-size: 11px;"
     "}";
 
   provider = gtk_css_provider_new();
@@ -1056,15 +1108,12 @@ bs_dock_app_ensure_window(BsDockApp *app) {
 
   app->window = GTK_WINDOW(gtk_application_window_new(app->gtk_app));
   bs_dock_app_configure_window(app);
+  gtk_widget_add_css_class(GTK_WIDGET(app->window), "bit-dock-window");
 
-  app->root_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+  app->root_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
   gtk_widget_add_css_class(app->root_box, "dock-root");
-  gtk_widget_set_margin_start(app->root_box, 10);
-  gtk_widget_set_margin_end(app->root_box, 10);
-  gtk_widget_set_margin_top(app->root_box, 8);
-  gtk_widget_set_margin_bottom(app->root_box, 8);
 
-  app->items_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+  app->items_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
   gtk_widget_set_halign(app->items_box, GTK_ALIGN_CENTER);
 
   app->status_label = gtk_label_new("Connecting to bit_shelld...");
