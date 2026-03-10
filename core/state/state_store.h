@@ -25,6 +25,9 @@ void bs_state_store_set_derived_updater(BsStateStore *store,
 BsSnapshot *bs_state_store_snapshot(BsStateStore *store);
 uint64_t bs_state_store_generation(const BsStateStore *store);
 uint64_t bs_state_store_topic_generation(const BsStateStore *store, BsTopic topic);
+const BsWindow *bs_state_store_lookup_window(BsStateStore *store, const char *window_id);
+const BsDockItem *bs_state_store_lookup_dock_item(BsStateStore *store, const char *app_key);
+GPtrArray *bs_state_store_list_app_windows(BsStateStore *store, const char *app_key);
 
 void bs_state_store_begin_update(BsStateStore *store);
 void bs_state_store_finish_update(BsStateStore *store);

@@ -35,6 +35,12 @@ bool bs_shelld_app_launch_app(BsShelldApp *app,
 bool bs_shelld_app_activate_app(BsShelldApp *app,
                                 const char *app_key,
                                 GError **error);
+bool bs_shelld_app_focus_next_app_window(BsShelldApp *app,
+                                         const char *app_key,
+                                         GError **error);
+bool bs_shelld_app_focus_prev_app_window(BsShelldApp *app,
+                                         const char *app_key,
+                                         GError **error);
 bool bs_shelld_app_focus_window(BsShelldApp *app,
                                 const char *window_id,
                                 GError **error);

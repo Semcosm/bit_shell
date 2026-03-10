@@ -281,6 +281,8 @@ bs_command_router_parse_request(BsCommandRouter *router,
       request->desktop_id = g_strdup(value_buf);
       break;
     case BS_COMMAND_ACTIVATE_APP:
+    case BS_COMMAND_FOCUS_NEXT_APP_WINDOW:
+    case BS_COMMAND_FOCUS_PREV_APP_WINDOW:
     case BS_COMMAND_PIN_APP:
     case BS_COMMAND_UNPIN_APP:
       if (!bs_json_extract_string_field(payload, "app_key", value_buf, sizeof(value_buf))) {
@@ -358,6 +360,18 @@ bs_command_router_handle_request(BsCommandRouter *router,
       return true;
     case BS_COMMAND_ACTIVATE_APP:
       if (!bs_shelld_app_activate_app(router->app, request->app_key, error)) {
+        return false;
+      }
+      *response_json = bs_command_router_build_ack_json(request, true);
+      return true;
+    case BS_COMMAND_FOCUS_NEXT_APP_WINDOW:
+      if (!bs_shelld_app_focus_next_app_window(router->app, request->app_key, error)) {
+        return false;
+      }
+      *response_json = bs_command_router_build_ack_json(request, true);
+      return true;
+    case BS_COMMAND_FOCUS_PREV_APP_WINDOW:
+      if (!bs_shelld_app_focus_prev_app_window(router->app, request->app_key, error)) {
         return false;
       }
       *response_json = bs_command_router_build_ack_json(request, true);

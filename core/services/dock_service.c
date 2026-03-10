@@ -5,6 +5,8 @@
 struct _BsDockService {
   BsStateStore *store;
   BsAppRegistry *app_registry;
+  GHashTable *running_order_by_app_key;
+  guint next_running_order;
 };
 
 static void bs_dock_service_free_dock_item_ptr(gpointer data);
@@ -14,6 +16,8 @@ static BsDockItem *bs_dock_service_ensure_item(GHashTable *items_by_key,
                                                const BsWindow *window);
 static void bs_dock_service_update_item_from_window(BsDockItem *dock_item, const BsWindow *window);
 static const BsAppState *bs_dock_service_lookup_app(BsSnapshot *snapshot, const char *app_key);
+static guint bs_dock_service_ensure_running_order(BsDockService *service, const char *app_key);
+static void bs_dock_service_prune_running_orders(BsDockService *service, GHashTable *items_by_key);
 
 static void
 bs_dock_service_free_dock_item_ptr(gpointer data) {
@@ -32,11 +36,18 @@ bs_dock_service_new(BsStateStore *store, BsAppRegistry *app_registry) {
   BsDockService *service = g_new0(BsDockService, 1);
   service->store = store;
   service->app_registry = app_registry;
+  service->running_order_by_app_key = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  service->next_running_order = 0;
   return service;
 }
 
 void
 bs_dock_service_free(BsDockService *service) {
+  if (service == NULL) {
+    return;
+  }
+
+  g_clear_pointer(&service->running_order_by_app_key, g_hash_table_unref);
   g_free(service);
 }
 
@@ -92,7 +103,10 @@ bs_dock_service_rebuild(BsDockService *service, GError **error) {
     app_state = bs_dock_service_lookup_app(snapshot, app_key);
     dock_item = bs_dock_service_ensure_item(items_by_key, app_key, app_state, window);
     bs_dock_service_update_item_from_window(dock_item, window);
+    dock_item->running_order = (int) bs_dock_service_ensure_running_order(service, app_key);
   }
+
+  bs_dock_service_prune_running_orders(service, items_by_key);
 
   dock_items = g_ptr_array_new_with_free_func((GDestroyNotify) bs_dock_service_free_dock_item_ptr);
   g_hash_table_iter_init(&iter, items_by_key);
@@ -127,6 +141,7 @@ bs_dock_service_ensure_item(GHashTable *items_by_key,
   dock_item->icon_name = app_state != NULL ? g_strdup(app_state->icon_name) : NULL;
   dock_item->window_ids = g_ptr_array_new_with_free_func(g_free);
   dock_item->pinned_index = -1;
+  dock_item->running_order = -1;
 
   if (dock_item->name == NULL && window != NULL) {
     dock_item->name = g_strdup(window->title != NULL ? window->title : window->app_id);
@@ -146,9 +161,6 @@ bs_dock_service_update_item_from_window(BsDockItem *dock_item, const BsWindow *w
   }
   dock_item->running = true;
   dock_item->focused = dock_item->focused || window->focused;
-  if (window->focus_ts > dock_item->last_focus_ts) {
-    dock_item->last_focus_ts = window->focus_ts;
-  }
 
   if (dock_item->name == NULL || *dock_item->name == '\0') {
     g_free(dock_item->name);
@@ -162,4 +174,41 @@ bs_dock_service_lookup_app(BsSnapshot *snapshot, const char *app_key) {
   g_return_val_if_fail(app_key != NULL, NULL);
 
   return g_hash_table_lookup(snapshot->apps, app_key);
+}
+
+static guint
+bs_dock_service_ensure_running_order(BsDockService *service, const char *app_key) {
+  gpointer existing = NULL;
+
+  g_return_val_if_fail(service != NULL, 0);
+  g_return_val_if_fail(app_key != NULL, 0);
+
+  existing = g_hash_table_lookup(service->running_order_by_app_key, app_key);
+  if (existing != NULL) {
+    return GPOINTER_TO_UINT(existing) - 1;
+  }
+
+  g_hash_table_insert(service->running_order_by_app_key,
+                      g_strdup(app_key),
+                      GUINT_TO_POINTER(service->next_running_order + 1));
+  service->next_running_order += 1;
+  return service->next_running_order - 1;
+}
+
+static void
+bs_dock_service_prune_running_orders(BsDockService *service, GHashTable *items_by_key) {
+  GHashTableIter iter;
+  gpointer key = NULL;
+
+  g_return_if_fail(service != NULL);
+  g_return_if_fail(items_by_key != NULL);
+
+  g_hash_table_iter_init(&iter, service->running_order_by_app_key);
+  while (g_hash_table_iter_next(&iter, &key, NULL)) {
+    const BsDockItem *dock_item = g_hash_table_lookup(items_by_key, key);
+
+    if (dock_item == NULL || !dock_item->running) {
+      g_hash_table_iter_remove(&iter);
+    }
+  }
 }

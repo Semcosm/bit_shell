@@ -205,7 +205,7 @@ bs_dock_item_dup(const BsDockItem *dock_item) {
   copy->running = dock_item->running;
   copy->focused = dock_item->focused;
   copy->pinned_index = dock_item->pinned_index;
-  copy->last_focus_ts = dock_item->last_focus_ts;
+  copy->running_order = dock_item->running_order;
   return copy;
 }
 
@@ -382,6 +382,53 @@ BsSnapshot *
 bs_state_store_snapshot(BsStateStore *store) {
   g_return_val_if_fail(store != NULL, NULL);
   return &store->snapshot;
+}
+
+const BsWindow *
+bs_state_store_lookup_window(BsStateStore *store, const char *window_id) {
+  g_return_val_if_fail(store != NULL, NULL);
+  g_return_val_if_fail(window_id != NULL, NULL);
+
+  return g_hash_table_lookup(store->snapshot.windows, window_id);
+}
+
+const BsDockItem *
+bs_state_store_lookup_dock_item(BsStateStore *store, const char *app_key) {
+  g_return_val_if_fail(store != NULL, NULL);
+  g_return_val_if_fail(app_key != NULL, NULL);
+
+  return g_hash_table_lookup(store->snapshot.dock_items, app_key);
+}
+
+GPtrArray *
+bs_state_store_list_app_windows(BsStateStore *store, const char *app_key) {
+  const BsDockItem *dock_item = NULL;
+  GPtrArray *windows = NULL;
+
+  g_return_val_if_fail(store != NULL, NULL);
+  g_return_val_if_fail(app_key != NULL, NULL);
+
+  dock_item = bs_state_store_lookup_dock_item(store, app_key);
+  if (dock_item == NULL || dock_item->window_ids == NULL) {
+    return NULL;
+  }
+
+  windows = g_ptr_array_new();
+  for (guint i = 0; i < dock_item->window_ids->len; i++) {
+    const char *window_id = g_ptr_array_index(dock_item->window_ids, i);
+    const BsWindow *window = NULL;
+
+    if (window_id == NULL) {
+      continue;
+    }
+
+    window = bs_state_store_lookup_window(store, window_id);
+    if (window != NULL) {
+      g_ptr_array_add(windows, (gpointer) window);
+    }
+  }
+
+  return windows;
 }
 
 uint64_t

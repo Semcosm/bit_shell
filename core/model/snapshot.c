@@ -216,11 +216,11 @@ bs_compare_dock_item(gconstpointer lhs, gconstpointer rhs) {
   if (a->pinned && b->pinned && a->pinned_index != b->pinned_index) {
     return a->pinned_index < b->pinned_index ? -1 : 1;
   }
-  if (a->focused != b->focused) {
-    return a->focused ? -1 : 1;
+  if (a->running != b->running) {
+    return a->running ? -1 : 1;
   }
-  if (a->last_focus_ts != b->last_focus_ts) {
-    return a->last_focus_ts > b->last_focus_ts ? -1 : 1;
+  if (a->running && b->running && a->running_order != b->running_order) {
+    return a->running_order < b->running_order ? -1 : 1;
   }
   return g_strcmp0(a->app_key, b->app_key);
 }
@@ -359,12 +359,11 @@ bs_json_append_dock_payload(GString *json, const BsSnapshot *snapshot) {
     g_string_append(json, ",\"icon_name\":");
     bs_json_append_nullable_string(json, dock_item->icon_name);
     g_string_append_printf(json,
-                           ",\"pinned\":%s,\"running\":%s,\"focused\":%s,\"pinned_index\":%d,\"last_focus_ts\":%" G_GUINT64_FORMAT ",\"window_ids\":",
+                           ",\"pinned\":%s,\"running\":%s,\"focused\":%s,\"pinned_index\":%d,\"window_ids\":",
                            dock_item->pinned ? "true" : "false",
                            dock_item->running ? "true" : "false",
                            dock_item->focused ? "true" : "false",
-                           dock_item->pinned_index,
-                           dock_item->last_focus_ts);
+                           dock_item->pinned_index);
     bs_json_append_string_array(json, window_ids);
     g_string_append(json, "}");
   }

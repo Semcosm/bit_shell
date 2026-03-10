@@ -19,7 +19,6 @@ typedef struct {
   bool running;
   bool focused;
   int pinned_index;
-  uint64_t last_focus_ts;
 } BsDockItemView;
 
 typedef struct {
@@ -32,9 +31,11 @@ typedef struct {
 } BsDockItemActionData;
 
 typedef struct {
-  bool focused;
-  uint64_t focus_ts;
-} BsWindowView;
+  GtkWidget *slot;
+  GtkWidget *button;
+  GtkWidget *indicator;
+  BsDockItemActionData *action;
+} BsDockItemWidgets;
 
 struct _BsDockApp {
   GtkApplication *gtk_app;
@@ -48,7 +49,7 @@ struct _BsDockApp {
   GOutputStream *output;
   GCancellable *read_cancellable;
   GPtrArray *items;
-  GHashTable *windows_by_id;
+  GHashTable *item_widgets_by_app_key;
   char *socket_path;
   guint reconnect_source_id;
   bool ipc_ready;
@@ -56,21 +57,25 @@ struct _BsDockApp {
 
 static void bs_dock_item_view_free(gpointer data);
 static void bs_dock_item_action_data_free(gpointer data);
-static void bs_window_view_free(gpointer data);
+static void bs_dock_item_widgets_free(gpointer data);
 static void bs_dock_app_close_connection(BsDockApp *app);
 static void bs_dock_app_set_status(BsDockApp *app, const char *message);
-static void bs_dock_app_rebuild_ui(BsDockApp *app);
+static void bs_dock_app_update_action_data(BsDockItemActionData *action, const BsDockItemView *item);
+static BsDockItemWidgets *bs_dock_app_create_item_widgets(BsDockApp *app, const BsDockItemView *item);
+static void bs_dock_app_update_item_widgets(BsDockApp *app,
+                                            BsDockItemWidgets *widgets,
+                                            const BsDockItemView *item);
+static void bs_dock_app_sync_ui(BsDockApp *app);
 static void bs_dock_app_apply_dock_payload(BsDockApp *app, JsonObject *payload);
-static void bs_dock_app_apply_windows_payload(BsDockApp *app, JsonObject *payload);
 static GPtrArray *bs_dock_app_parse_dock_items(JsonObject *payload);
-static GHashTable *bs_dock_app_parse_windows_payload(JsonObject *payload);
+static void bs_dock_app_log_dock_items(BsDockApp *app, const char *source);
 static gboolean bs_dock_app_reconnect_cb(gpointer user_data);
 static void bs_dock_app_schedule_reconnect(BsDockApp *app);
 static bool bs_dock_app_send_json(BsDockApp *app, const char *json, GError **error);
-static bool bs_dock_app_focus_window_for_action(BsDockApp *app,
-                                                const BsDockItemActionData *action,
-                                                int direction,
-                                                GError **error);
+static bool bs_dock_app_send_app_window_focus_request(BsDockApp *app,
+                                                      const BsDockItemActionData *action,
+                                                      int direction,
+                                                      GError **error);
 static void bs_dock_app_begin_read(BsDockApp *app);
 static void bs_dock_app_on_read_line(GObject *source_object,
                                      GAsyncResult *result,
@@ -79,7 +84,11 @@ static bool bs_dock_app_connect_ipc(BsDockApp *app, GError **error);
 static void bs_dock_app_ensure_window(BsDockApp *app);
 static void bs_dock_app_apply_css(void);
 static void bs_dock_app_on_activate(GtkApplication *gtk_app, gpointer user_data);
-static void bs_dock_app_on_item_clicked(GtkButton *button, gpointer user_data);
+static void bs_dock_app_on_item_primary_pressed(GtkGestureClick *gesture,
+                                                gint n_press,
+                                                gdouble x,
+                                                gdouble y,
+                                                gpointer user_data);
 static void bs_dock_app_on_item_secondary_pressed(GtkGestureClick *gesture,
                                                   gint n_press,
                                                   gdouble x,
@@ -91,7 +100,6 @@ static gboolean bs_dock_app_on_item_scrolled(GtkEventControllerScroll *controlle
                                              gpointer user_data);
 static GPtrArray *bs_string_ptr_array_dup(GPtrArray *values);
 static GPtrArray *bs_json_string_array_member(JsonObject *object, const char *member_name);
-static int bs_dock_app_find_active_window_index(BsDockApp *app, GPtrArray *window_ids);
 
 static char *
 bs_dock_app_default_socket_path(void) {
@@ -134,11 +142,6 @@ bs_dock_item_action_data_free(gpointer data) {
   g_free(action);
 }
 
-static void
-bs_window_view_free(gpointer data) {
-  g_free(data);
-}
-
 BsDockApp *
 bs_dock_app_new(void) {
   BsDockApp *app = g_new0(BsDockApp, 1);
@@ -148,14 +151,15 @@ bs_dock_app_new(void) {
   app->socket_client = g_socket_client_new();
   app->read_cancellable = g_cancellable_new();
   app->items = g_ptr_array_new_with_free_func(bs_dock_item_view_free);
-  app->windows_by_id = g_hash_table_new_full(g_str_hash,
-                                             g_str_equal,
-                                             g_free,
-                                             bs_window_view_free);
+  app->item_widgets_by_app_key = g_hash_table_new_full(g_str_hash,
+                                                       g_str_equal,
+                                                       g_free,
+                                                       bs_dock_item_widgets_free);
   app->socket_path = (socket_override != NULL && *socket_override != '\0')
                        ? g_strdup(socket_override)
                        : bs_dock_app_default_socket_path();
 
+  g_message("[bit_dock] initialized with IPC socket %s", app->socket_path);
   g_signal_connect(app->gtk_app, "activate", G_CALLBACK(bs_dock_app_on_activate), app);
   return app;
 }
@@ -171,7 +175,7 @@ bs_dock_app_free(BsDockApp *app) {
   }
   bs_dock_app_close_connection(app);
   g_clear_pointer(&app->items, g_ptr_array_unref);
-  g_clear_pointer(&app->windows_by_id, g_hash_table_unref);
+  g_clear_pointer(&app->item_widgets_by_app_key, g_hash_table_unref);
   g_clear_object(&app->read_cancellable);
   g_clear_object(&app->socket_client);
   g_clear_object(&app->gtk_app);
@@ -197,6 +201,7 @@ bs_dock_app_close_connection(BsDockApp *app) {
   g_clear_object(&app->input);
   app->output = NULL;
   if (app->connection != NULL) {
+    g_message("[bit_dock] closing IPC connection");
     (void) g_io_stream_close(G_IO_STREAM(app->connection), NULL, NULL);
     g_clear_object(&app->connection);
   }
@@ -213,33 +218,44 @@ bs_dock_app_set_status(BsDockApp *app, const char *message) {
 }
 
 static void
-bs_dock_app_clear_items_box(BsDockApp *app) {
-  GtkWidget *child = NULL;
+bs_dock_item_widgets_free(gpointer data) {
+  BsDockItemWidgets *widgets = data;
 
-  g_return_if_fail(app != NULL);
-  g_return_if_fail(app->items_box != NULL);
-
-  child = gtk_widget_get_first_child(app->items_box);
-  while (child != NULL) {
-    GtkWidget *next = gtk_widget_get_next_sibling(child);
-    gtk_box_remove(GTK_BOX(app->items_box), child);
-    child = next;
+  if (widgets == NULL) {
+    return;
   }
+
+  if (widgets->slot != NULL && gtk_widget_get_parent(widgets->slot) != NULL) {
+    gtk_box_remove(GTK_BOX(gtk_widget_get_parent(widgets->slot)), widgets->slot);
+  }
+  bs_dock_item_action_data_free(widgets->action);
+  g_free(widgets);
 }
 
 static void
-bs_dock_app_on_item_clicked(GtkButton *button, gpointer user_data) {
-  BsDockApp *app = user_data;
-  BsDockItemActionData *action = NULL;
+bs_dock_app_update_action_data(BsDockItemActionData *action, const BsDockItemView *item) {
+  g_return_if_fail(action != NULL);
+  g_return_if_fail(item != NULL);
+
+  action->focused = item->focused;
+  g_free(action->app_key);
+  action->app_key = g_strdup(item->app_key);
+  g_free(action->desktop_id);
+  action->desktop_id = g_strdup(item->desktop_id);
+  g_clear_pointer(&action->window_ids, g_ptr_array_unref);
+  action->window_ids = bs_string_ptr_array_dup(item->window_ids);
+  action->pinned = item->pinned;
+  action->running = item->running;
+}
+
+static void
+bs_dock_app_send_primary_action(BsDockApp *app, const BsDockItemActionData *action) {
   g_autoptr(GError) error = NULL;
   g_autofree char *escaped_app_key = NULL;
   g_autofree char *escaped_desktop_id = NULL;
   g_autofree char *request = NULL;
 
   g_return_if_fail(app != NULL);
-  g_return_if_fail(button != NULL);
-
-  action = g_object_get_data(G_OBJECT(button), "bs-dock-action");
   if (action == NULL || !app->ipc_ready) {
     return;
   }
@@ -248,7 +264,11 @@ bs_dock_app_on_item_clicked(GtkButton *button, gpointer user_data) {
     if (action->focused
         && action->window_ids != NULL
         && action->window_ids->len > 1) {
-      if (!bs_dock_app_focus_window_for_action(app, action, 1, &error)) {
+      g_message("[bit_dock] request focus_next_app_window for %s",
+                action->app_key != NULL ? action->app_key : "(null)");
+      if (!bs_dock_app_send_app_window_focus_request(app, action, 1, &error)) {
+        g_warning("[bit_dock] focus_next_app_window failed: %s",
+                  error != NULL ? error->message : "unknown error");
         bs_dock_app_set_status(app, error != NULL ? error->message : "Failed to focus next window");
       }
       return;
@@ -257,18 +277,50 @@ bs_dock_app_on_item_clicked(GtkButton *button, gpointer user_data) {
     escaped_app_key = g_strescape(action->app_key != NULL ? action->app_key : "", NULL);
     request = g_strdup_printf("{\"op\":\"activate_app\",\"app_key\":\"%s\"}",
                               escaped_app_key != NULL ? escaped_app_key : "");
+    g_message("[bit_dock] request activate_app for %s",
+              action->app_key != NULL ? action->app_key : "(null)");
   } else if (action->desktop_id != NULL) {
     escaped_desktop_id = g_strescape(action->desktop_id, NULL);
     request = g_strdup_printf("{\"op\":\"launch_app\",\"desktop_id\":\"%s\"}",
                               escaped_desktop_id != NULL ? escaped_desktop_id : "");
+    g_message("[bit_dock] request launch_app for %s", action->desktop_id);
   } else {
     bs_dock_app_set_status(app, "Missing desktop_id for launch");
     return;
   }
 
   if (!bs_dock_app_send_json(app, request, &error)) {
+    g_warning("[bit_dock] command send failed: %s",
+              error != NULL ? error->message : "unknown error");
     bs_dock_app_set_status(app, error != NULL ? error->message : "Failed to send command");
   }
+}
+
+static void
+bs_dock_app_on_item_primary_pressed(GtkGestureClick *gesture,
+                                    gint n_press,
+                                    gdouble x,
+                                    gdouble y,
+                                    gpointer user_data) {
+  GtkWidget *button = user_data;
+  BsDockItemActionData *action = NULL;
+  BsDockApp *app = NULL;
+
+  (void) n_press;
+  (void) x;
+  (void) y;
+
+  g_return_if_fail(GTK_IS_GESTURE_CLICK(gesture));
+  g_return_if_fail(button != NULL);
+
+  action = g_object_get_data(G_OBJECT(button), "bs-dock-action");
+  app = g_object_get_data(G_OBJECT(button), "bs-dock-app");
+  if (action == NULL || app == NULL) {
+    return;
+  }
+
+  gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+  bs_dock_app_send_primary_action(app, action);
 }
 
 static void
@@ -305,7 +357,12 @@ bs_dock_app_on_item_secondary_pressed(GtkGestureClick *gesture,
   request = g_strdup_printf("{\"op\":\"%s\",\"app_key\":\"%s\"}",
                             action->pinned ? "unpin_app" : "pin_app",
                             escaped_app_key != NULL ? escaped_app_key : "");
+  g_message("[bit_dock] request %s for %s",
+            action->pinned ? "unpin_app" : "pin_app",
+            action->desktop_id);
   if (!bs_dock_app_send_json(app, request, &error)) {
+    g_warning("[bit_dock] pin command send failed: %s",
+              error != NULL ? error->message : "unknown error");
     bs_dock_app_set_status(app, error != NULL ? error->message : "Failed to send pin command");
   }
 }
@@ -342,96 +399,167 @@ bs_dock_app_on_item_scrolled(GtkEventControllerScroll *controller,
     return GDK_EVENT_PROPAGATE;
   }
 
-  if (!bs_dock_app_focus_window_for_action(app, action, direction, &error)) {
+  g_message("[bit_dock] request %s for %s",
+            direction > 0 ? "focus_next_app_window" : "focus_prev_app_window",
+            action->app_key != NULL ? action->app_key : "(null)");
+  if (!bs_dock_app_send_app_window_focus_request(app, action, direction, &error)) {
+    g_warning("[bit_dock] app window focus request failed: %s",
+              error != NULL ? error->message : "unknown error");
     bs_dock_app_set_status(app, error != NULL ? error->message : "Failed to cycle app windows");
   }
 
   return GDK_EVENT_STOP;
 }
 
+static BsDockItemWidgets *
+bs_dock_app_create_item_widgets(BsDockApp *app, const BsDockItemView *item) {
+  BsDockItemWidgets *widgets = NULL;
+  GtkGesture *primary_click = NULL;
+  GtkGesture *secondary_click = NULL;
+  GtkEventController *scroll = NULL;
+
+  g_return_val_if_fail(app != NULL, NULL);
+  g_return_val_if_fail(item != NULL, NULL);
+
+  widgets = g_new0(BsDockItemWidgets, 1);
+  widgets->slot = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+  gtk_widget_set_halign(widgets->slot, GTK_ALIGN_CENTER);
+  gtk_widget_add_css_class(widgets->slot, "dock-slot");
+
+  widgets->button = gtk_button_new();
+  gtk_widget_add_css_class(widgets->button, "dock-item");
+  gtk_widget_set_size_request(widgets->button, 60, 60);
+
+  widgets->indicator = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+  gtk_widget_add_css_class(widgets->indicator, "dock-indicator");
+  gtk_widget_set_halign(widgets->indicator, GTK_ALIGN_CENTER);
+
+  widgets->action = g_new0(BsDockItemActionData, 1);
+  g_object_set_data(G_OBJECT(widgets->button), "bs-dock-app", app);
+  g_object_set_data(G_OBJECT(widgets->button), "bs-dock-action", widgets->action);
+
+  primary_click = gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(primary_click), GDK_BUTTON_PRIMARY);
+  g_signal_connect(primary_click,
+                   "pressed",
+                   G_CALLBACK(bs_dock_app_on_item_primary_pressed),
+                   widgets->button);
+  gtk_widget_add_controller(widgets->button, GTK_EVENT_CONTROLLER(primary_click));
+
+  secondary_click = gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(secondary_click), GDK_BUTTON_SECONDARY);
+  g_signal_connect(secondary_click,
+                   "pressed",
+                   G_CALLBACK(bs_dock_app_on_item_secondary_pressed),
+                   widgets->button);
+  gtk_widget_add_controller(widgets->button, GTK_EVENT_CONTROLLER(secondary_click));
+
+  scroll = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL
+                                           | GTK_EVENT_CONTROLLER_SCROLL_DISCRETE);
+  g_signal_connect(scroll,
+                   "scroll",
+                   G_CALLBACK(bs_dock_app_on_item_scrolled),
+                   widgets->button);
+  gtk_widget_add_controller(widgets->button, scroll);
+
+  gtk_box_append(GTK_BOX(widgets->slot), widgets->button);
+  gtk_box_append(GTK_BOX(widgets->slot), widgets->indicator);
+
+  bs_dock_app_update_item_widgets(app, widgets, item);
+  return widgets;
+}
+
 static void
-bs_dock_app_rebuild_ui(BsDockApp *app) {
+bs_dock_app_update_item_widgets(BsDockApp *app,
+                                BsDockItemWidgets *widgets,
+                                const BsDockItemView *item) {
+  g_return_if_fail(app != NULL);
+  g_return_if_fail(widgets != NULL);
+  g_return_if_fail(item != NULL);
+
+  bs_dock_app_update_action_data(widgets->action, item);
+
+  gtk_widget_set_tooltip_text(widgets->button, item->name != NULL ? item->name : item->app_key);
+  if (item->icon_name != NULL && *item->icon_name != '\0') {
+    gtk_button_set_icon_name(GTK_BUTTON(widgets->button), item->icon_name);
+  } else {
+    gtk_button_set_icon_name(GTK_BUTTON(widgets->button), NULL);
+    gtk_button_set_label(GTK_BUTTON(widgets->button),
+                         item->name != NULL ? item->name : item->app_key);
+  }
+
+  if (item->running) {
+    gtk_widget_add_css_class(widgets->button, "is-running");
+  } else {
+    gtk_widget_remove_css_class(widgets->button, "is-running");
+  }
+  if (item->focused) {
+    gtk_widget_add_css_class(widgets->button, "is-focused");
+  } else {
+    gtk_widget_remove_css_class(widgets->button, "is-focused");
+  }
+  if (item->pinned && !item->running) {
+    gtk_widget_add_css_class(widgets->button, "is-pinned");
+  } else {
+    gtk_widget_remove_css_class(widgets->button, "is-pinned");
+  }
+
+  gtk_widget_set_size_request(widgets->indicator, item->focused ? 22 : 14, 4);
+  if (!item->running) {
+    gtk_widget_add_css_class(widgets->indicator, "is-hidden");
+    gtk_widget_remove_css_class(widgets->indicator, "is-focused");
+  } else if (item->focused) {
+    gtk_widget_remove_css_class(widgets->indicator, "is-hidden");
+    gtk_widget_add_css_class(widgets->indicator, "is-focused");
+  } else {
+    gtk_widget_remove_css_class(widgets->indicator, "is-hidden");
+    gtk_widget_remove_css_class(widgets->indicator, "is-focused");
+  }
+}
+
+static void
+bs_dock_app_sync_ui(BsDockApp *app) {
+  g_autoptr(GHashTable) seen_keys = NULL;
+  GtkWidget *previous_slot = NULL;
+
   g_return_if_fail(app != NULL);
   g_return_if_fail(app->items_box != NULL);
 
-  bs_dock_app_clear_items_box(app);
-
+  seen_keys = g_hash_table_new(g_str_hash, g_str_equal);
   for (guint i = 0; i < app->items->len; i++) {
     const BsDockItemView *item = g_ptr_array_index(app->items, i);
-    BsDockItemActionData *action = NULL;
-    GtkWidget *slot = NULL;
-    GtkWidget *button = NULL;
-    GtkWidget *indicator = NULL;
-    GtkGesture *secondary_click = NULL;
+    BsDockItemWidgets *widgets = NULL;
 
-    slot = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    gtk_widget_set_halign(slot, GTK_ALIGN_CENTER);
-    gtk_widget_add_css_class(slot, "dock-slot");
+    if (item == NULL || item->app_key == NULL) {
+      continue;
+    }
 
-    button = gtk_button_new();
-    gtk_widget_add_css_class(button, "dock-item");
-    gtk_widget_set_size_request(button, 60, 60);
-    gtk_widget_set_tooltip_text(button, item->name != NULL ? item->name : item->app_key);
-    if (item->icon_name != NULL && *item->icon_name != '\0') {
-      gtk_button_set_icon_name(GTK_BUTTON(button), item->icon_name);
+    g_hash_table_add(seen_keys, item->app_key);
+    widgets = g_hash_table_lookup(app->item_widgets_by_app_key, item->app_key);
+    if (widgets == NULL) {
+      widgets = bs_dock_app_create_item_widgets(app, item);
+      g_hash_table_insert(app->item_widgets_by_app_key, g_strdup(item->app_key), widgets);
+      gtk_box_append(GTK_BOX(app->items_box), widgets->slot);
     } else {
-      gtk_button_set_label(GTK_BUTTON(button), item->name != NULL ? item->name : item->app_key);
-    }
-    if (item->running) {
-      gtk_widget_add_css_class(button, "is-running");
-    }
-    if (item->focused) {
-      gtk_widget_add_css_class(button, "is-focused");
-    }
-    if (item->pinned && !item->running) {
-      gtk_widget_add_css_class(button, "is-pinned");
+      bs_dock_app_update_item_widgets(app, widgets, item);
     }
 
-    action = g_new0(BsDockItemActionData, 1);
-    action->focused = item->focused;
-    action->app_key = g_strdup(item->app_key);
-    action->desktop_id = g_strdup(item->desktop_id);
-    action->window_ids = bs_string_ptr_array_dup(item->window_ids);
-    action->pinned = item->pinned;
-    action->running = item->running;
-    g_object_set_data_full(G_OBJECT(button),
-                           "bs-dock-action",
-                           action,
-                           bs_dock_item_action_data_free);
-    g_object_set_data(G_OBJECT(button), "bs-dock-app", app);
-    g_signal_connect(button, "clicked", G_CALLBACK(bs_dock_app_on_item_clicked), app);
+#if GTK_CHECK_VERSION(4, 10, 0)
+    gtk_box_reorder_child_after(GTK_BOX(app->items_box), widgets->slot, previous_slot);
+#endif
+    previous_slot = widgets->slot;
+  }
 
-    secondary_click = gtk_gesture_click_new();
-    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(secondary_click), GDK_BUTTON_SECONDARY);
-    g_signal_connect(secondary_click,
-                     "pressed",
-                     G_CALLBACK(bs_dock_app_on_item_secondary_pressed),
-                     button);
-    gtk_widget_add_controller(button, GTK_EVENT_CONTROLLER(secondary_click));
+  if (app->item_widgets_by_app_key != NULL) {
+    GHashTableIter iter;
+    gpointer key = NULL;
 
-    if (item->window_ids != NULL && item->window_ids->len > 1) {
-      GtkEventController *scroll = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL
-                                                                   | GTK_EVENT_CONTROLLER_SCROLL_DISCRETE);
-      g_signal_connect(scroll,
-                       "scroll",
-                       G_CALLBACK(bs_dock_app_on_item_scrolled),
-                       button);
-      gtk_widget_add_controller(button, scroll);
+    g_hash_table_iter_init(&iter, app->item_widgets_by_app_key);
+    while (g_hash_table_iter_next(&iter, &key, NULL)) {
+      if (!g_hash_table_contains(seen_keys, key)) {
+        g_hash_table_iter_remove(&iter);
+      }
     }
-
-    indicator = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_widget_add_css_class(indicator, "dock-indicator");
-    gtk_widget_set_halign(indicator, GTK_ALIGN_CENTER);
-    gtk_widget_set_size_request(indicator, item->focused ? 22 : 14, 4);
-    if (!item->running) {
-      gtk_widget_add_css_class(indicator, "is-hidden");
-    } else if (item->focused) {
-      gtk_widget_add_css_class(indicator, "is-focused");
-    }
-
-    gtk_box_append(GTK_BOX(slot), button);
-    gtk_box_append(GTK_BOX(slot), indicator);
-    gtk_box_append(GTK_BOX(app->items_box), slot);
   }
 
   if (app->items->len == 0) {
@@ -565,7 +693,6 @@ bs_dock_app_parse_dock_items(JsonObject *payload) {
     item->running = bs_json_bool_member(item_object, "running", false);
     item->focused = bs_json_bool_member(item_object, "focused", false);
     item->pinned_index = (int) bs_json_int_member(item_object, "pinned_index", -1);
-    item->last_focus_ts = (uint64_t) bs_json_int_member(item_object, "last_focus_ts", 0);
 
     if (item->app_key == NULL || *item->app_key == '\0') {
       bs_dock_item_view_free(item);
@@ -578,132 +705,62 @@ bs_dock_app_parse_dock_items(JsonObject *payload) {
   return items;
 }
 
-static void
-bs_dock_app_apply_windows_payload(BsDockApp *app, JsonObject *payload) {
-  g_autoptr(GHashTable) windows_by_id = NULL;
-
-  g_return_if_fail(app != NULL);
-
-  windows_by_id = bs_dock_app_parse_windows_payload(payload);
-  g_clear_pointer(&app->windows_by_id, g_hash_table_unref);
-  app->windows_by_id = g_steal_pointer(&windows_by_id);
-}
-
-static GHashTable *
-bs_dock_app_parse_windows_payload(JsonObject *payload) {
-  GHashTable *windows_by_id = g_hash_table_new_full(g_str_hash,
-                                                    g_str_equal,
-                                                    g_free,
-                                                    bs_window_view_free);
-  JsonArray *windows_array = NULL;
-
-  if (payload == NULL || !json_object_has_member(payload, "windows")) {
-    return windows_by_id;
-  }
-
-  windows_array = json_object_get_array_member(payload, "windows");
-  if (windows_array == NULL) {
-    return windows_by_id;
-  }
-
-  for (guint i = 0; i < json_array_get_length(windows_array); i++) {
-    JsonObject *window_object = json_array_get_object_element(windows_array, i);
-    const char *window_id = NULL;
-    BsWindowView *window = NULL;
-
-    if (window_object == NULL) {
-      continue;
-    }
-
-    window_id = bs_json_string_member(window_object, "id");
-    if (window_id == NULL || *window_id == '\0') {
-      continue;
-    }
-
-    window = g_new0(BsWindowView, 1);
-    window->focused = bs_json_bool_member(window_object, "focused", false);
-    window->focus_ts = (uint64_t) bs_json_int_member(window_object, "focus_ts", 0);
-    g_hash_table_replace(windows_by_id, g_strdup(window_id), window);
-  }
-
-  return windows_by_id;
-}
-
-static int
-bs_dock_app_find_active_window_index(BsDockApp *app, GPtrArray *window_ids) {
-  int best_index = -1;
-  uint64_t best_focus_ts = 0;
-
-  g_return_val_if_fail(app != NULL, -1);
-  g_return_val_if_fail(window_ids != NULL, -1);
-
-  for (guint i = 0; i < window_ids->len; i++) {
-    const char *window_id = g_ptr_array_index(window_ids, i);
-    const BsWindowView *window = NULL;
-
-    if (window_id == NULL) {
-      continue;
-    }
-
-    window = g_hash_table_lookup(app->windows_by_id, window_id);
-    if (window == NULL) {
-      continue;
-    }
-    if (window->focused) {
-      return (int) i;
-    }
-    if (best_index < 0 || window->focus_ts > best_focus_ts) {
-      best_index = (int) i;
-      best_focus_ts = window->focus_ts;
-    }
-  }
-
-  if (best_index >= 0) {
-    return best_index;
-  }
-  return window_ids->len > 0 ? 0 : -1;
-}
-
 static bool
-bs_dock_app_focus_window_for_action(BsDockApp *app,
-                                    const BsDockItemActionData *action,
-                                    int direction,
-                                    GError **error) {
-  int current_index = -1;
-  int next_index = 0;
-  const char *window_id = NULL;
-  g_autofree char *escaped_window_id = NULL;
+bs_dock_app_send_app_window_focus_request(BsDockApp *app,
+                                          const BsDockItemActionData *action,
+                                          int direction,
+                                          GError **error) {
+  const char *op = NULL;
+  g_autofree char *escaped_app_key = NULL;
   g_autofree char *request = NULL;
 
   g_return_val_if_fail(app != NULL, false);
   g_return_val_if_fail(action != NULL, false);
 
-  if (action->window_ids == NULL || action->window_ids->len == 0) {
-    g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "No window is available for this dock item");
+  if (action->app_key == NULL || *action->app_key == '\0') {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Missing app_key for app window focus");
     return false;
   }
 
-  current_index = bs_dock_app_find_active_window_index(app, action->window_ids);
-  if (current_index < 0) {
-    g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "Failed to resolve the active window");
-    return false;
-  }
-
-  next_index = (current_index + direction) % (int) action->window_ids->len;
-  if (next_index < 0) {
-    next_index += (int) action->window_ids->len;
-  }
-
-  window_id = g_ptr_array_index(action->window_ids, next_index);
-  if (window_id == NULL || *window_id == '\0') {
-    g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Resolved window_id is empty");
-    return false;
-  }
-
-  escaped_window_id = g_strescape(window_id, NULL);
-  request = g_strdup_printf("{\"op\":\"focus_window\",\"window_id\":\"%s\"}",
-                            escaped_window_id != NULL ? escaped_window_id : "");
+  op = direction >= 0 ? "focus_next_app_window" : "focus_prev_app_window";
+  escaped_app_key = g_strescape(action->app_key, NULL);
+  request = g_strdup_printf("{\"op\":\"%s\",\"app_key\":\"%s\"}",
+                            op,
+                            escaped_app_key != NULL ? escaped_app_key : "");
   return bs_dock_app_send_json(app, request, error);
+}
+
+static void
+bs_dock_app_log_dock_items(BsDockApp *app, const char *source) {
+  const BsDockItemView *focused_item = NULL;
+
+  g_return_if_fail(app != NULL);
+
+  for (guint i = 0; i < app->items->len; i++) {
+    const BsDockItemView *item = g_ptr_array_index(app->items, i);
+
+    if (item != NULL) {
+      g_message("[bit_dock] dock item[%u] source=%s app_key=%s running=%s focused=%s windows=%u icon=%s",
+                i,
+                source != NULL ? source : "unknown",
+                item->app_key != NULL ? item->app_key : "(null)",
+                item->running ? "true" : "false",
+                item->focused ? "true" : "false",
+                item->window_ids != NULL ? item->window_ids->len : 0,
+                item->icon_name != NULL && *item->icon_name != '\0' ? item->icon_name : "(none)");
+    }
+
+    if (item != NULL && item->focused) {
+      focused_item = item;
+      break;
+    }
+  }
+
+  g_message("[bit_dock] applied dock payload from %s items=%u focused_app=%s focused_windows=%u",
+            source != NULL ? source : "unknown",
+            app->items != NULL ? app->items->len : 0,
+            focused_item != NULL && focused_item->app_key != NULL ? focused_item->app_key : "(none)",
+            focused_item != NULL && focused_item->window_ids != NULL ? focused_item->window_ids->len : 0);
 }
 
 static void
@@ -715,7 +772,8 @@ bs_dock_app_apply_dock_payload(BsDockApp *app, JsonObject *payload) {
   items = bs_dock_app_parse_dock_items(payload);
   g_clear_pointer(&app->items, g_ptr_array_unref);
   app->items = g_steal_pointer(&items);
-  bs_dock_app_rebuild_ui(app);
+  bs_dock_app_log_dock_items(app, "update");
+  bs_dock_app_sync_ui(app);
 }
 
 static gboolean
@@ -725,8 +783,11 @@ bs_dock_app_reconnect_cb(gpointer user_data) {
 
   g_return_val_if_fail(app != NULL, G_SOURCE_REMOVE);
   app->reconnect_source_id = 0;
+  g_message("[bit_dock] retrying IPC connection");
 
   if (!bs_dock_app_connect_ipc(app, &error)) {
+    g_warning("[bit_dock] reconnect failed: %s",
+              error != NULL ? error->message : "unknown error");
     bs_dock_app_set_status(app, error != NULL ? error->message : "Reconnect failed");
     bs_dock_app_schedule_reconnect(app);
   }
@@ -742,6 +803,7 @@ bs_dock_app_schedule_reconnect(BsDockApp *app) {
     return;
   }
 
+  g_message("[bit_dock] scheduling IPC reconnect in %u ms", BS_DOCK_RECONNECT_DELAY_MS);
   app->reconnect_source_id = g_timeout_add(BS_DOCK_RECONNECT_DELAY_MS,
                                            bs_dock_app_reconnect_cb,
                                            app);
@@ -792,6 +854,7 @@ bs_dock_app_handle_message(BsDockApp *app, const char *line) {
 
   parser = json_parser_new();
   if (!json_parser_load_from_data(parser, line, -1, NULL)) {
+    g_warning("[bit_dock] failed to parse IPC message: %s", line);
     bs_dock_app_set_status(app, "Failed to parse IPC message");
     return;
   }
@@ -805,10 +868,8 @@ bs_dock_app_handle_message(BsDockApp *app, const char *line) {
   kind = bs_json_string_member(root_object, "kind");
   if (g_strcmp0(kind, "snapshot") == 0) {
     JsonObject *state = json_object_get_object_member(root_object, "state");
-    JsonObject *windows = state != NULL ? json_object_get_object_member(state, "windows") : NULL;
     JsonObject *dock = state != NULL ? json_object_get_object_member(state, "dock") : NULL;
 
-    bs_dock_app_apply_windows_payload(app, windows);
     bs_dock_app_apply_dock_payload(app, dock);
     return;
   }
@@ -819,14 +880,13 @@ bs_dock_app_handle_message(BsDockApp *app, const char *line) {
 
     if (g_strcmp0(topic, "dock") == 0 && payload != NULL) {
       bs_dock_app_apply_dock_payload(app, payload);
-    } else if (g_strcmp0(topic, "windows") == 0 && payload != NULL) {
-      bs_dock_app_apply_windows_payload(app, payload);
     }
     return;
   }
 
   if (g_strcmp0(kind, "error") == 0) {
     const char *message = bs_json_string_member(root_object, "message");
+    g_warning("[bit_dock] IPC error: %s", message != NULL ? message : "request failed");
     bs_dock_app_set_status(app, message != NULL ? message : "IPC request failed");
   }
 }
@@ -862,6 +922,8 @@ bs_dock_app_on_read_line(GObject *source_object,
   }
 
   if (line == NULL) {
+    g_warning("[bit_dock] IPC disconnected: %s",
+              error != NULL ? error->message : "Dock IPC disconnected");
     bs_dock_app_close_connection(app);
     bs_dock_app_set_status(app, error != NULL ? error->message : "Dock IPC disconnected");
     bs_dock_app_schedule_reconnect(app);
@@ -881,6 +943,7 @@ bs_dock_app_connect_ipc(BsDockApp *app, GError **error) {
   g_return_val_if_fail(app != NULL, false);
 
   bs_dock_app_close_connection(app);
+  g_message("[bit_dock] connecting to IPC socket %s", app->socket_path);
   address = g_unix_socket_address_new(app->socket_path);
   app->connection = g_socket_client_connect(app->socket_client,
                                             G_SOCKET_CONNECTABLE(address),
@@ -898,12 +961,13 @@ bs_dock_app_connect_ipc(BsDockApp *app, GError **error) {
     bs_dock_app_close_connection(app);
     return false;
   }
-  if (!bs_dock_app_send_json(app, "{\"op\":\"subscribe\",\"topics\":[\"dock\",\"windows\"]}", error)) {
+  if (!bs_dock_app_send_json(app, "{\"op\":\"subscribe\",\"topics\":[\"dock\"]}", error)) {
     bs_dock_app_close_connection(app);
     return false;
   }
 
   app->ipc_ready = true;
+  g_message("[bit_dock] IPC connected and subscribed to dock topic");
   bs_dock_app_set_status(app, "");
   bs_dock_app_begin_read(app);
   return true;
@@ -1020,11 +1084,14 @@ bs_dock_app_on_activate(GtkApplication *gtk_app, gpointer user_data) {
   g_return_if_fail(app != NULL);
   g_return_if_fail(gtk_app != NULL);
 
+  g_message("[bit_dock] activate");
   bs_dock_app_apply_css();
   bs_dock_app_ensure_window(app);
   gtk_window_present(app->window);
 
   if (!app->ipc_ready && !bs_dock_app_connect_ipc(app, &error)) {
+    g_warning("[bit_dock] initial IPC connect failed: %s",
+              error != NULL ? error->message : "unknown error");
     bs_dock_app_set_status(app, error != NULL ? error->message : "Failed to connect to bit_shelld");
     bs_dock_app_schedule_reconnect(app);
   }

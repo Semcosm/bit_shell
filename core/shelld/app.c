@@ -2,6 +2,8 @@
 
 #include <glib.h>
 
+#define BS_WINDOW_CYCLE_CONTEXT_TIMEOUT_US (3 * G_TIME_SPAN_SECOND)
+
 struct _BsShelldApp {
   BsShelldConfig config;
   GMainLoop *main_loop;
@@ -16,13 +18,30 @@ struct _BsShelldApp {
   BsCommandRouter *command_router;
   BsIpcServer *ipc_server;
   bool running;
+  struct {
+    char *app_key;
+    GPtrArray *window_ids;
+    guint current_index;
+    gint64 last_request_time_us;
+  } window_cycle_context;
 };
 
 static void bs_shelld_app_rebuild_derived_state(BsStateStore *store, gpointer user_data);
-static const BsWindow *bs_shelld_app_find_best_window_for_app(BsShelldApp *app, const char *app_key);
-static const BsWindow *bs_shelld_app_find_best_window_by_field(BsSnapshot *snapshot,
-                                                               const char *app_key,
-                                                               bool match_desktop_id);
+static void bs_shelld_app_reset_window_cycle_context(BsShelldApp *app);
+static GPtrArray *bs_shelld_app_collect_windows_for_app(BsShelldApp *app, const char *app_key);
+static gint bs_shelld_app_compare_windows_by_focus_ts(gconstpointer lhs, gconstpointer rhs);
+static void bs_shelld_app_log_app_windows(const char *prefix, const char *app_key, GPtrArray *windows);
+static const BsWindow *bs_shelld_app_find_focused_window(GPtrArray *windows);
+static const BsWindow *bs_shelld_app_find_window_by_id(GPtrArray *windows, const char *window_id);
+static GPtrArray *bs_shelld_app_build_cycle_window_ids(GPtrArray *windows);
+static bool bs_shelld_app_window_set_matches_cycle_context(GPtrArray *windows, GPtrArray *window_ids);
+static bool bs_shelld_app_prepare_window_cycle_context(BsShelldApp *app,
+                                                       const char *app_key,
+                                                       GPtrArray *windows);
+static bool bs_shelld_app_focus_adjacent_app_window(BsShelldApp *app,
+                                                    const char *app_key,
+                                                    int direction,
+                                                    GError **error);
 static bool bs_shelld_app_set_app_pinned(BsShelldApp *app,
                                          const char *app_key,
                                          bool pinned,
@@ -99,6 +118,7 @@ bs_shelld_app_free(BsShelldApp *app) {
   }
 
   bs_shell_config_clear(&app->config);
+  bs_shelld_app_reset_window_cycle_context(app);
   g_free(app);
 }
 
@@ -207,58 +227,6 @@ bs_shelld_app_rebuild_derived_state(BsStateStore *store, gpointer user_data) {
   }
 }
 
-static const BsWindow *
-bs_shelld_app_find_best_window_for_app(BsShelldApp *app, const char *app_key) {
-  BsSnapshot *snapshot = NULL;
-  const BsWindow *best = NULL;
-
-  g_return_val_if_fail(app != NULL, NULL);
-  g_return_val_if_fail(app_key != NULL, NULL);
-
-  snapshot = bs_state_store_snapshot(app->state_store);
-  if (snapshot == NULL) {
-    return NULL;
-  }
-
-  /* `app_key` is canonicalized to desktop_id when known; app_id is fallback only. */
-  best = bs_shelld_app_find_best_window_by_field(snapshot, app_key, true);
-  if (best != NULL) {
-    return best;
-  }
-
-  return bs_shelld_app_find_best_window_by_field(snapshot, app_key, false);
-}
-
-static const BsWindow *
-bs_shelld_app_find_best_window_by_field(BsSnapshot *snapshot,
-                                        const char *app_key,
-                                        bool match_desktop_id) {
-  GHashTableIter iter;
-  gpointer value = NULL;
-  const BsWindow *best = NULL;
-
-  g_return_val_if_fail(snapshot != NULL, NULL);
-  g_return_val_if_fail(app_key != NULL, NULL);
-
-  g_hash_table_iter_init(&iter, snapshot->windows);
-  while (g_hash_table_iter_next(&iter, NULL, &value)) {
-    const BsWindow *window = value;
-    const char *candidate = match_desktop_id ? window->desktop_id : window->app_id;
-
-    if (g_strcmp0(candidate, app_key) != 0) {
-      continue;
-    }
-
-    if (best == NULL
-        || (window->focused && !best->focused)
-        || (window->focused == best->focused && window->focus_ts > best->focus_ts)) {
-      best = window;
-    }
-  }
-
-  return best;
-}
-
 bool
 bs_shelld_app_launch_app(BsShelldApp *app,
                          const char *desktop_id,
@@ -273,13 +241,19 @@ bool
 bs_shelld_app_activate_app(BsShelldApp *app,
                            const char *app_key,
                            GError **error) {
+  g_autoptr(GPtrArray) windows = NULL;
   const BsWindow *window = NULL;
 
   g_return_val_if_fail(app != NULL, false);
   g_return_val_if_fail(app_key != NULL, false);
 
-  window = bs_shelld_app_find_best_window_for_app(app, app_key);
+  windows = bs_shelld_app_collect_windows_for_app(app, app_key);
+  window = windows != NULL ? bs_shelld_app_find_focused_window(windows) : NULL;
+  if (window == NULL && windows != NULL && windows->len > 0) {
+    window = g_ptr_array_index(windows, 0);
+  }
   if (window == NULL || window->id == NULL) {
+    bs_shelld_app_log_app_windows("activate_app missing target", app_key, windows);
     g_set_error(error,
                 G_IO_ERROR,
                 G_IO_ERROR_NOT_FOUND,
@@ -288,7 +262,283 @@ bs_shelld_app_activate_app(BsShelldApp *app,
     return false;
   }
 
+  bs_shelld_app_log_app_windows("activate_app resolved windows", app_key, windows);
+  bs_shelld_app_reset_window_cycle_context(app);
   return bs_niri_backend_focus_window(app->niri_backend, window->id, error);
+}
+
+static void
+bs_shelld_app_reset_window_cycle_context(BsShelldApp *app) {
+  g_return_if_fail(app != NULL);
+
+  g_clear_pointer(&app->window_cycle_context.app_key, g_free);
+  g_clear_pointer(&app->window_cycle_context.window_ids, g_ptr_array_unref);
+  app->window_cycle_context.current_index = 0;
+  app->window_cycle_context.last_request_time_us = 0;
+}
+
+static GPtrArray *
+bs_shelld_app_collect_windows_for_app(BsShelldApp *app, const char *app_key) {
+  GPtrArray *windows = NULL;
+
+  g_return_val_if_fail(app != NULL, NULL);
+  g_return_val_if_fail(app_key != NULL, NULL);
+
+  windows = bs_state_store_list_app_windows(app->state_store, app_key);
+  if (windows == NULL) {
+    return NULL;
+  }
+  g_ptr_array_sort(windows, bs_shelld_app_compare_windows_by_focus_ts);
+  return windows;
+}
+
+static gint
+bs_shelld_app_compare_windows_by_focus_ts(gconstpointer lhs, gconstpointer rhs) {
+  const BsWindow *a = *(const BsWindow * const *) lhs;
+  const BsWindow *b = *(const BsWindow * const *) rhs;
+
+  if (a->focus_ts != b->focus_ts) {
+    return a->focus_ts > b->focus_ts ? -1 : 1;
+  }
+  return g_strcmp0(a->id, b->id);
+}
+
+static void
+bs_shelld_app_log_app_windows(const char *prefix, const char *app_key, GPtrArray *windows) {
+  GString *message = NULL;
+
+  g_return_if_fail(app_key != NULL);
+
+  if (windows == NULL || windows->len == 0) {
+    g_message("[bit_shelld] %s app_key=%s windows=[]",
+              prefix != NULL ? prefix : "app windows",
+              app_key);
+    return;
+  }
+
+  message = g_string_new(NULL);
+  for (guint i = 0; i < windows->len; i++) {
+    const BsWindow *window = g_ptr_array_index(windows, i);
+
+    if (window == NULL) {
+      continue;
+    }
+    if (message->len > 0) {
+      g_string_append(message, ", ");
+    }
+    g_string_append_printf(message,
+                           "{id=%s focused=%s desktop_id=%s app_id=%s focus_ts=%" G_GUINT64_FORMAT "}",
+                           window->id != NULL ? window->id : "(null)",
+                           window->focused ? "true" : "false",
+                           window->desktop_id != NULL ? window->desktop_id : "(null)",
+                           window->app_id != NULL ? window->app_id : "(null)",
+                           window->focus_ts);
+  }
+
+  g_message("[bit_shelld] %s app_key=%s windows=[%s]",
+            prefix != NULL ? prefix : "app windows",
+            app_key,
+            message->str);
+  g_string_free(message, true);
+}
+
+static const BsWindow *
+bs_shelld_app_find_focused_window(GPtrArray *windows) {
+  g_return_val_if_fail(windows != NULL, NULL);
+
+  for (guint i = 0; i < windows->len; i++) {
+    const BsWindow *window = g_ptr_array_index(windows, i);
+
+    if (window != NULL && window->focused) {
+      return window;
+    }
+  }
+
+  return NULL;
+}
+
+static const BsWindow *
+bs_shelld_app_find_window_by_id(GPtrArray *windows, const char *window_id) {
+  g_return_val_if_fail(windows != NULL, NULL);
+  g_return_val_if_fail(window_id != NULL, NULL);
+
+  for (guint i = 0; i < windows->len; i++) {
+    const BsWindow *window = g_ptr_array_index(windows, i);
+
+    if (window != NULL && g_strcmp0(window->id, window_id) == 0) {
+      return window;
+    }
+  }
+
+  return NULL;
+}
+
+static GPtrArray *
+bs_shelld_app_build_cycle_window_ids(GPtrArray *windows) {
+  g_autoptr(GPtrArray) window_ids = NULL;
+  const BsWindow *focused_window = NULL;
+
+  g_return_val_if_fail(windows != NULL, NULL);
+
+  window_ids = g_ptr_array_new_with_free_func(g_free);
+  focused_window = bs_shelld_app_find_focused_window(windows);
+  if (focused_window != NULL && focused_window->id != NULL) {
+    g_ptr_array_add(window_ids, g_strdup(focused_window->id));
+  }
+
+  for (guint i = 0; i < windows->len; i++) {
+    const BsWindow *window = g_ptr_array_index(windows, i);
+
+    if (window == NULL
+        || window->id == NULL
+        || (focused_window != NULL && g_strcmp0(window->id, focused_window->id) == 0)) {
+      continue;
+    }
+
+    g_ptr_array_add(window_ids, g_strdup(window->id));
+  }
+
+  return g_steal_pointer(&window_ids);
+}
+
+static bool
+bs_shelld_app_window_set_matches_cycle_context(GPtrArray *windows, GPtrArray *window_ids) {
+  g_return_val_if_fail(windows != NULL, false);
+  g_return_val_if_fail(window_ids != NULL, false);
+
+  if (windows->len != window_ids->len) {
+    return false;
+  }
+
+  for (guint i = 0; i < window_ids->len; i++) {
+    const char *window_id = g_ptr_array_index(window_ids, i);
+
+    if (window_id == NULL || bs_shelld_app_find_window_by_id(windows, window_id) == NULL) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+static bool
+bs_shelld_app_prepare_window_cycle_context(BsShelldApp *app,
+                                           const char *app_key,
+                                           GPtrArray *windows) {
+  const gint64 now_us = g_get_monotonic_time();
+
+  g_return_val_if_fail(app != NULL, false);
+  g_return_val_if_fail(app_key != NULL, false);
+  g_return_val_if_fail(windows != NULL, false);
+
+  if (app->window_cycle_context.app_key != NULL
+      && g_strcmp0(app->window_cycle_context.app_key, app_key) == 0
+      && app->window_cycle_context.window_ids != NULL
+      && app->window_cycle_context.last_request_time_us > 0
+      && (now_us - app->window_cycle_context.last_request_time_us) < BS_WINDOW_CYCLE_CONTEXT_TIMEOUT_US
+      && bs_shelld_app_window_set_matches_cycle_context(windows,
+                                                        app->window_cycle_context.window_ids)) {
+    return true;
+  }
+
+  bs_shelld_app_reset_window_cycle_context(app);
+  app->window_cycle_context.app_key = g_strdup(app_key);
+  app->window_cycle_context.window_ids = bs_shelld_app_build_cycle_window_ids(windows);
+  app->window_cycle_context.current_index = 0;
+  app->window_cycle_context.last_request_time_us = 0;
+  return app->window_cycle_context.window_ids != NULL
+         && app->window_cycle_context.window_ids->len > 0;
+}
+
+static bool
+bs_shelld_app_focus_adjacent_app_window(BsShelldApp *app,
+                                        const char *app_key,
+                                        int direction,
+                                        GError **error) {
+  g_autoptr(GPtrArray) windows = NULL;
+  GPtrArray *cycle_window_ids = NULL;
+  guint current_index = 0;
+  guint target_index = 0;
+  const BsWindow *current_window = NULL;
+  const BsWindow *target_window = NULL;
+
+  g_return_val_if_fail(app != NULL, false);
+  g_return_val_if_fail(app_key != NULL, false);
+  g_return_val_if_fail(direction == 1 || direction == -1, false);
+
+  windows = bs_shelld_app_collect_windows_for_app(app, app_key);
+  if (windows == NULL || windows->len == 0) {
+    bs_shelld_app_reset_window_cycle_context(app);
+    g_set_error(error,
+                G_IO_ERROR,
+                G_IO_ERROR_NOT_FOUND,
+                "no running windows found for app_key: %s",
+                app_key);
+    return false;
+  }
+
+  if (!bs_shelld_app_prepare_window_cycle_context(app, app_key, windows)) {
+    g_set_error(error,
+                G_IO_ERROR,
+                G_IO_ERROR_NOT_FOUND,
+                "failed to build window cycle context for app_key: %s",
+                app_key);
+    return false;
+  }
+
+  cycle_window_ids = app->window_cycle_context.window_ids;
+  current_index = MIN(app->window_cycle_context.current_index, cycle_window_ids->len - 1);
+  current_window = bs_shelld_app_find_window_by_id(windows,
+                                                   g_ptr_array_index(cycle_window_ids, current_index));
+  if (cycle_window_ids->len > 1) {
+    if (direction > 0) {
+      target_index = (current_index + 1) % cycle_window_ids->len;
+    } else {
+      target_index = (current_index + cycle_window_ids->len - 1) % cycle_window_ids->len;
+    }
+  }
+
+  target_window = bs_shelld_app_find_window_by_id(windows,
+                                                  g_ptr_array_index(cycle_window_ids, target_index));
+  if (target_window == NULL || target_window->id == NULL) {
+    bs_shelld_app_reset_window_cycle_context(app);
+    g_set_error(error,
+                G_IO_ERROR,
+                G_IO_ERROR_NOT_FOUND,
+                "failed to resolve adjacent window for app_key: %s",
+                app_key);
+    return false;
+  }
+
+  g_message("[bit_shelld] %s app_key=%s windows=%u current_window=%s current_focus_ts=%" G_GUINT64_FORMAT " target_window=%s target_focus_ts=%" G_GUINT64_FORMAT,
+            direction > 0 ? "focus_next_app_window" : "focus_prev_app_window",
+            app_key,
+            windows->len,
+            current_window != NULL && current_window->id != NULL ? current_window->id : "(null)",
+            current_window != NULL ? current_window->focus_ts : 0,
+            target_window->id,
+            target_window->focus_ts);
+  if (!bs_niri_backend_focus_window(app->niri_backend, target_window->id, error)) {
+    return false;
+  }
+
+  app->window_cycle_context.current_index = target_index;
+  app->window_cycle_context.last_request_time_us = g_get_monotonic_time();
+  return true;
+}
+
+bool
+bs_shelld_app_focus_next_app_window(BsShelldApp *app,
+                                    const char *app_key,
+                                    GError **error) {
+  return bs_shelld_app_focus_adjacent_app_window(app, app_key, 1, error);
+}
+
+bool
+bs_shelld_app_focus_prev_app_window(BsShelldApp *app,
+                                    const char *app_key,
+                                    GError **error) {
+  return bs_shelld_app_focus_adjacent_app_window(app, app_key, -1, error);
 }
 
 bool
@@ -298,6 +548,7 @@ bs_shelld_app_focus_window(BsShelldApp *app,
   g_return_val_if_fail(app != NULL, false);
   g_return_val_if_fail(window_id != NULL, false);
 
+  bs_shelld_app_reset_window_cycle_context(app);
   return bs_niri_backend_focus_window(app->niri_backend, window_id, error);
 }
 

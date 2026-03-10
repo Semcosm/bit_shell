@@ -64,7 +64,7 @@ typedef struct {
   bool running;
   bool focused;
   int pinned_index;
-  uint64_t last_focus_ts;
+  int running_order;
 } BsDockItem;
 
 void bs_shell_state_clear(BsShellState *shell_state);
