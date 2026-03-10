@@ -22,6 +22,19 @@ executable(
   'bit_shelld',
   bit_shelld_sources,
   include_directories: core_includes,
-  dependencies: [glib_dep, gio_dep, json_glib_dep],
+  dependencies: [glib_dep, gio_dep, gio_unix_dep, json_glib_dep],
+  install: false,
+)
+
+bit_dock_sources = files(
+  'frontends/bit_dock/main.c',
+  'frontends/bit_dock/dock_app.c',
+)
+
+executable(
+  'bit_dock',
+  bit_dock_sources,
+  include_directories: core_includes,
+  dependencies: [glib_dep, gio_dep, gio_unix_dep, json_glib_dep, gtk4_dep, gtk4_layer_shell_dep],
   install: false,
 )
