@@ -44,3 +44,4 @@ Follow the existing commit pattern: `<scope>: <imperative summary>` (examples: `
 
 ## Agent-Specific Instructions
 - 默认使用中文与仓库协作者沟通与回复，除非对方明确要求其他语言。
+- 开发时保持谨慎；如果需要额外查资料，先向协作者说明要查什么、为什么查；对不确定且可能影响实现方向的事项，先提问确认，再继续开发。
