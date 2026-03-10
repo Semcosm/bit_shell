@@ -42,7 +42,12 @@ v1 约定：
 
 - `window_ids`
 - `focused`
-- `last_focus_ts`
+
+app 级命令语义：
+
+- `activate_app(app_key)`：聚焦该 app 当前 focused 窗口；若没有 focused，则选择该 app 当前窗口集合中的首选窗口
+- `focus_next_app_window(app_key)` / `focus_prev_app_window(app_key)`：由 `bit_shelld` 基于权威状态决定目标窗口
+- 前端不直接指定目标 `window_id`
 
 ### 无法识别的窗口
 

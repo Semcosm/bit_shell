@@ -42,6 +42,8 @@ topic 与 `BsTopic` 一致：
 - `snapshot`
 - `launch_app`
 - `activate_app`
+- `focus_next_app_window`
+- `focus_prev_app_window`
 - `focus_window`
 - `switch_workspace`
 - `toggle_launchpad`
@@ -53,8 +55,9 @@ topic 与 `BsTopic` 一致：
 参数约定：
 
 - `launch_app.desktop_id` 必须传 `.desktop` 文件 ID
-- `activate_app.app_key` 在 v1 中应传 `desktop_id`
-- `pin_app.app_key` / `unpin_app.app_key` 在 v1 中也应传 `desktop_id`
+- `activate_app.app_key` / `focus_next_app_window.app_key` / `focus_prev_app_window.app_key` 应传稳定 `app_key`
+- `pin_app.app_key` / `unpin_app.app_key` 在 v1 中也应传稳定 `app_key`
+- `app_key` 在可解析时稳定等于 `desktop_id`
 - 仅当窗口缺少 `desktop_id` 映射时，core 才会回退使用 `app_id` 做窗口匹配
 
 ## 基本信封格式
@@ -196,7 +199,6 @@ topic 与 `BsTopic` 一致：
         "running": true,
         "focused": false,
         "pinned_index": 0,
-        "last_focus_ts": 1730000000000000000,
         "window_ids": ["118", "132"]
       }
     ]
@@ -226,6 +228,6 @@ topic 与 `BsTopic` 一致：
 - `snapshot` 已输出真实 topic 结构：`shell/windows/workspaces/dock` 为完整结构，`settings` 已包含 `pinned_apps`，`tray` 仍为最小结构
 - `subscribe` 已在 IPC server 内维持客户端订阅集合，并在 `StateStore` topic 变化时向对应客户端推送 `event`
 - `StateStore` 支持批量更新事务（begin/finish），可在一次提交中原子推进多 topic 版本
-- `switch_workspace`、`focus_window`、`activate_app`、`launch_app`、`pin_app`、`unpin_app` 已接入真实执行链路
+- `switch_workspace`、`focus_window`、`activate_app`、`focus_next_app_window`、`focus_prev_app_window`、`launch_app`、`pin_app`、`unpin_app` 已接入真实执行链路
 - `pin_app` / `unpin_app` 当前会更新内存状态并立即 flush 到 `state.json`
 - 其余命令当前仍以 `ack + params + todo` 形式回包
