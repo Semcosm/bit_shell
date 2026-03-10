@@ -18,6 +18,16 @@ struct _BsShelldApp {
   bool running;
 };
 
+static void bs_shelld_app_rebuild_derived_state(BsStateStore *store, gpointer user_data);
+static const BsWindow *bs_shelld_app_find_best_window_for_app(BsShelldApp *app, const char *app_key);
+static const BsWindow *bs_shelld_app_find_best_window_by_field(BsSnapshot *snapshot,
+                                                               const char *app_key,
+                                                               bool match_desktop_id);
+static bool bs_shelld_app_set_app_pinned(BsShelldApp *app,
+                                         const char *app_key,
+                                         bool pinned,
+                                         GError **error);
+
 BsShelldApp *
 bs_shelld_app_new(const BsShelldConfig *config) {
   BsShelldApp *app = g_new0(BsShelldApp, 1);
@@ -45,7 +55,10 @@ bs_shelld_app_new(const BsShelldConfig *config) {
   app->app_registry = bs_app_registry_new(app->state_store, &app_registry_config);
 
   app->workspace_service = bs_workspace_service_new(app->state_store);
-  app->dock_service = bs_dock_service_new(app->state_store);
+  app->dock_service = bs_dock_service_new(app->state_store, app->app_registry);
+  bs_state_store_set_derived_updater(app->state_store,
+                                     bs_shelld_app_rebuild_derived_state,
+                                     app);
   app->launcher_service = bs_launcher_service_new(app->state_store);
 
   tray_config.watcher_name = app->config.tray_watcher_name;
@@ -178,4 +191,188 @@ const BsShelldConfig *
 bs_shelld_app_config(const BsShelldApp *app) {
   g_return_val_if_fail(app != NULL, NULL);
   return &app->config;
+}
+
+static void
+bs_shelld_app_rebuild_derived_state(BsStateStore *store, gpointer user_data) {
+  BsShelldApp *app = user_data;
+  g_autoptr(GError) error = NULL;
+
+  (void) store;
+  g_return_if_fail(app != NULL);
+
+  if (!bs_dock_service_rebuild(app->dock_service, &error)) {
+    g_warning("[bit_shelld] failed to rebuild dock state: %s",
+              error != NULL ? error->message : "unknown error");
+  }
+}
+
+static const BsWindow *
+bs_shelld_app_find_best_window_for_app(BsShelldApp *app, const char *app_key) {
+  BsSnapshot *snapshot = NULL;
+  const BsWindow *best = NULL;
+
+  g_return_val_if_fail(app != NULL, NULL);
+  g_return_val_if_fail(app_key != NULL, NULL);
+
+  snapshot = bs_state_store_snapshot(app->state_store);
+  if (snapshot == NULL) {
+    return NULL;
+  }
+
+  /* `app_key` is canonicalized to desktop_id when known; app_id is fallback only. */
+  best = bs_shelld_app_find_best_window_by_field(snapshot, app_key, true);
+  if (best != NULL) {
+    return best;
+  }
+
+  return bs_shelld_app_find_best_window_by_field(snapshot, app_key, false);
+}
+
+static const BsWindow *
+bs_shelld_app_find_best_window_by_field(BsSnapshot *snapshot,
+                                        const char *app_key,
+                                        bool match_desktop_id) {
+  GHashTableIter iter;
+  gpointer value = NULL;
+  const BsWindow *best = NULL;
+
+  g_return_val_if_fail(snapshot != NULL, NULL);
+  g_return_val_if_fail(app_key != NULL, NULL);
+
+  g_hash_table_iter_init(&iter, snapshot->windows);
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    const BsWindow *window = value;
+    const char *candidate = match_desktop_id ? window->desktop_id : window->app_id;
+
+    if (g_strcmp0(candidate, app_key) != 0) {
+      continue;
+    }
+
+    if (best == NULL
+        || (window->focused && !best->focused)
+        || (window->focused == best->focused && window->focus_ts > best->focus_ts)) {
+      best = window;
+    }
+  }
+
+  return best;
+}
+
+bool
+bs_shelld_app_launch_app(BsShelldApp *app,
+                         const char *desktop_id,
+                         GError **error) {
+  g_return_val_if_fail(app != NULL, false);
+  g_return_val_if_fail(desktop_id != NULL, false);
+
+  return bs_app_registry_launch_desktop_id(app->app_registry, desktop_id, error);
+}
+
+bool
+bs_shelld_app_activate_app(BsShelldApp *app,
+                           const char *app_key,
+                           GError **error) {
+  const BsWindow *window = NULL;
+
+  g_return_val_if_fail(app != NULL, false);
+  g_return_val_if_fail(app_key != NULL, false);
+
+  window = bs_shelld_app_find_best_window_for_app(app, app_key);
+  if (window == NULL || window->id == NULL) {
+    g_set_error(error,
+                G_IO_ERROR,
+                G_IO_ERROR_NOT_FOUND,
+                "no running window found for app_key: %s",
+                app_key);
+    return false;
+  }
+
+  return bs_niri_backend_focus_window(app->niri_backend, window->id, error);
+}
+
+bool
+bs_shelld_app_focus_window(BsShelldApp *app,
+                           const char *window_id,
+                           GError **error) {
+  g_return_val_if_fail(app != NULL, false);
+  g_return_val_if_fail(window_id != NULL, false);
+
+  return bs_niri_backend_focus_window(app->niri_backend, window_id, error);
+}
+
+bool
+bs_shelld_app_switch_workspace(BsShelldApp *app,
+                               const char *workspace_id,
+                               GError **error) {
+  g_return_val_if_fail(app != NULL, false);
+  g_return_val_if_fail(workspace_id != NULL, false);
+
+  return bs_niri_backend_focus_workspace(app->niri_backend, workspace_id, error);
+}
+
+static bool
+bs_shelld_app_set_app_pinned(BsShelldApp *app,
+                             const char *app_key,
+                             bool pinned,
+                             GError **error) {
+  BsSnapshot *snapshot = NULL;
+  g_autofree char *desktop_id = NULL;
+  g_autoptr(GPtrArray) pinned_app_ids = NULL;
+  bool already_present = false;
+
+  g_return_val_if_fail(app != NULL, false);
+  g_return_val_if_fail(app_key != NULL, false);
+
+  desktop_id = bs_app_registry_canonical_desktop_id(app->app_registry, app_key);
+  if (desktop_id == NULL) {
+    g_set_error(error,
+                G_IO_ERROR,
+                G_IO_ERROR_NOT_FOUND,
+                "app_key cannot be canonicalized to desktop_id: %s",
+                app_key);
+    return false;
+  }
+
+  snapshot = bs_state_store_snapshot(app->state_store);
+  pinned_app_ids = g_ptr_array_new_with_free_func(g_free);
+  if (snapshot != NULL && snapshot->pinned_app_ids != NULL) {
+    for (guint i = 0; i < snapshot->pinned_app_ids->len; i++) {
+      const char *existing = g_ptr_array_index(snapshot->pinned_app_ids, i);
+
+      if (g_strcmp0(existing, desktop_id) == 0) {
+        already_present = true;
+        if (!pinned) {
+          continue;
+        }
+      }
+
+      if (existing != NULL && *existing != '\0') {
+        g_ptr_array_add(pinned_app_ids, g_strdup(existing));
+      }
+    }
+  }
+
+  if (pinned && !already_present) {
+    g_ptr_array_add(pinned_app_ids, g_strdup(desktop_id));
+  }
+
+  bs_state_store_begin_update(app->state_store);
+  bs_state_store_replace_pinned_app_ids(app->state_store, pinned_app_ids);
+  bs_state_store_finish_update(app->state_store);
+  return bs_settings_service_flush(app->settings_service, error);
+}
+
+bool
+bs_shelld_app_pin_app(BsShelldApp *app,
+                      const char *app_key,
+                      GError **error) {
+  return bs_shelld_app_set_app_pinned(app, app_key, true, error);
+}
+
+bool
+bs_shelld_app_unpin_app(BsShelldApp *app,
+                        const char *app_key,
+                        GError **error) {
+  return bs_shelld_app_set_app_pinned(app, app_key, false, error);
 }

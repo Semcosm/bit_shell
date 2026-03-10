@@ -208,6 +208,24 @@ bs_command_request_params_json(const BsCommandRequest *request) {
   return g_string_free(json, false);
 }
 
+static char *
+bs_command_router_build_ack_json(const BsCommandRequest *request, bool routed) {
+  g_autofree char *params_json = NULL;
+
+  g_return_val_if_fail(request != NULL, NULL);
+
+  params_json = bs_command_request_params_json(request);
+  if (routed) {
+    return g_strdup_printf("{\"ok\":true,\"kind\":\"ack\",\"command\":\"%s\",\"params\":%s}",
+                           bs_command_to_string(request->command),
+                           params_json);
+  }
+
+  return g_strdup_printf("{\"ok\":true,\"kind\":\"ack\",\"command\":\"%s\",\"params\":%s,\"todo\":\"route-command\"}",
+                         bs_command_to_string(request->command),
+                         params_json);
+}
+
 BsCommandRouter *
 bs_command_router_new(BsShelldApp *app) {
   BsCommandRouter *router = g_new0(BsCommandRouter, 1);
@@ -332,11 +350,44 @@ bs_command_router_handle_request(BsCommandRouter *router,
                                        topic_versions_json);
       return true;
     }
+    case BS_COMMAND_LAUNCH_APP:
+      if (!bs_shelld_app_launch_app(router->app, request->desktop_id, error)) {
+        return false;
+      }
+      *response_json = bs_command_router_build_ack_json(request, true);
+      return true;
+    case BS_COMMAND_ACTIVATE_APP:
+      if (!bs_shelld_app_activate_app(router->app, request->app_key, error)) {
+        return false;
+      }
+      *response_json = bs_command_router_build_ack_json(request, true);
+      return true;
+    case BS_COMMAND_FOCUS_WINDOW:
+      if (!bs_shelld_app_focus_window(router->app, request->window_id, error)) {
+        return false;
+      }
+      *response_json = bs_command_router_build_ack_json(request, true);
+      return true;
+    case BS_COMMAND_SWITCH_WORKSPACE:
+      if (!bs_shelld_app_switch_workspace(router->app, request->workspace_id, error)) {
+        return false;
+      }
+      *response_json = bs_command_router_build_ack_json(request, true);
+      return true;
+    case BS_COMMAND_PIN_APP:
+      if (!bs_shelld_app_pin_app(router->app, request->app_key, error)) {
+        return false;
+      }
+      *response_json = bs_command_router_build_ack_json(request, true);
+      return true;
+    case BS_COMMAND_UNPIN_APP:
+      if (!bs_shelld_app_unpin_app(router->app, request->app_key, error)) {
+        return false;
+      }
+      *response_json = bs_command_router_build_ack_json(request, true);
+      return true;
     default: {
-      g_autofree char *params_json = bs_command_request_params_json(request);
-      *response_json = g_strdup_printf("{\"ok\":true,\"kind\":\"ack\",\"command\":\"%s\",\"params\":%s,\"todo\":\"route-command\"}",
-                                       bs_command_to_string(request->command),
-                                       params_json);
+      *response_json = bs_command_router_build_ack_json(request, false);
       return true;
     }
   }

@@ -11,11 +11,14 @@ static void bs_hash_table_destroy_dock_item(gpointer value);
 static GHashTable *bs_hash_table_new_full_map(GDestroyNotify value_destroy);
 static void bs_json_append_quoted(GString *json, const char *value);
 static void bs_json_append_nullable_string(GString *json, const char *value);
+static void bs_json_append_string_array(GString *json, GPtrArray *values);
 static GPtrArray *bs_hash_table_values_to_ptr_array(GHashTable *table);
 static gint bs_compare_string_ids(const char *lhs, const char *rhs);
+static gint bs_compare_string_ptr(gconstpointer lhs, gconstpointer rhs);
 static gint bs_compare_workspace(gconstpointer lhs, gconstpointer rhs);
 static gint bs_compare_output(gconstpointer lhs, gconstpointer rhs);
 static gint bs_compare_window(gconstpointer lhs, gconstpointer rhs);
+static gint bs_compare_dock_item(gconstpointer lhs, gconstpointer rhs);
 
 static void
 bs_hash_table_destroy_window(gpointer value) {
@@ -88,6 +91,21 @@ bs_json_append_nullable_string(GString *json, const char *value) {
   bs_json_append_quoted(json, value);
 }
 
+static void
+bs_json_append_string_array(GString *json, GPtrArray *values) {
+  g_string_append(json, "[");
+  if (values != NULL) {
+    for (guint i = 0; i < values->len; i++) {
+      const char *value = g_ptr_array_index(values, i);
+      if (i > 0) {
+        g_string_append(json, ",");
+      }
+      bs_json_append_nullable_string(json, value);
+    }
+  }
+  g_string_append(json, "]");
+}
+
 static GPtrArray *
 bs_hash_table_values_to_ptr_array(GHashTable *table) {
   GPtrArray *values = g_ptr_array_new();
@@ -144,6 +162,13 @@ bs_compare_string_ids(const char *lhs, const char *rhs) {
 }
 
 static gint
+bs_compare_string_ptr(gconstpointer lhs, gconstpointer rhs) {
+  const char *a = *(const char * const *) lhs;
+  const char *b = *(const char * const *) rhs;
+  return bs_compare_string_ids(a, b);
+}
+
+static gint
 bs_compare_workspace(gconstpointer lhs, gconstpointer rhs) {
   const BsWorkspace *a = *(BsWorkspace * const *) lhs;
   const BsWorkspace *b = *(BsWorkspace * const *) rhs;
@@ -178,6 +203,26 @@ bs_compare_window(gconstpointer lhs, gconstpointer rhs) {
     return a->focus_ts > b->focus_ts ? -1 : 1;
   }
   return bs_compare_string_ids(a->id, b->id);
+}
+
+static gint
+bs_compare_dock_item(gconstpointer lhs, gconstpointer rhs) {
+  const BsDockItem *a = *(BsDockItem * const *) lhs;
+  const BsDockItem *b = *(BsDockItem * const *) rhs;
+
+  if (a->pinned != b->pinned) {
+    return a->pinned ? -1 : 1;
+  }
+  if (a->pinned && b->pinned && a->pinned_index != b->pinned_index) {
+    return a->pinned_index < b->pinned_index ? -1 : 1;
+  }
+  if (a->focused != b->focused) {
+    return a->focused ? -1 : 1;
+  }
+  if (a->last_focus_ts != b->last_focus_ts) {
+    return a->last_focus_ts > b->last_focus_ts ? -1 : 1;
+  }
+  return g_strcmp0(a->app_key, b->app_key);
 }
 
 static void
@@ -282,6 +327,57 @@ bs_json_append_workspaces_payload(GString *json, const BsSnapshot *snapshot) {
   g_string_append(json, "]}");
 }
 
+static void
+bs_json_append_dock_payload(GString *json, const BsSnapshot *snapshot) {
+  g_autoptr(GPtrArray) dock_items = bs_hash_table_values_to_ptr_array(snapshot->dock_items);
+
+  g_ptr_array_sort(dock_items, bs_compare_dock_item);
+  g_string_append(json, "{\"items\":[");
+  for (guint i = 0; i < dock_items->len; i++) {
+    const BsDockItem *dock_item = g_ptr_array_index(dock_items, i);
+    g_autoptr(GPtrArray) window_ids = g_ptr_array_new_with_free_func(g_free);
+
+    if (i > 0) {
+      g_string_append(json, ",");
+    }
+
+    if (dock_item->window_ids != NULL) {
+      for (guint window_index = 0; window_index < dock_item->window_ids->len; window_index++) {
+        const char *window_id = g_ptr_array_index(dock_item->window_ids, window_index);
+        g_ptr_array_add(window_ids, g_strdup(window_id));
+      }
+    }
+    g_ptr_array_sort(window_ids, bs_compare_string_ptr);
+
+    g_string_append(json, "{");
+    g_string_append(json, "\"app_key\":");
+    bs_json_append_nullable_string(json, dock_item->app_key);
+    g_string_append(json, ",\"desktop_id\":");
+    bs_json_append_nullable_string(json, dock_item->desktop_id);
+    g_string_append(json, ",\"name\":");
+    bs_json_append_nullable_string(json, dock_item->name);
+    g_string_append(json, ",\"icon_name\":");
+    bs_json_append_nullable_string(json, dock_item->icon_name);
+    g_string_append_printf(json,
+                           ",\"pinned\":%s,\"running\":%s,\"focused\":%s,\"pinned_index\":%d,\"last_focus_ts\":%" G_GUINT64_FORMAT ",\"window_ids\":",
+                           dock_item->pinned ? "true" : "false",
+                           dock_item->running ? "true" : "false",
+                           dock_item->focused ? "true" : "false",
+                           dock_item->pinned_index,
+                           dock_item->last_focus_ts);
+    bs_json_append_string_array(json, window_ids);
+    g_string_append(json, "}");
+  }
+  g_string_append(json, "]}");
+}
+
+static void
+bs_json_append_settings_payload(GString *json, const BsSnapshot *snapshot) {
+  g_string_append(json, "{\"config_loaded\":true,\"pinned_apps\":");
+  bs_json_append_string_array(json, snapshot->pinned_app_ids);
+  g_string_append(json, "}");
+}
+
 void
 bs_snapshot_init(BsSnapshot *snapshot) {
   g_return_if_fail(snapshot != NULL);
@@ -291,6 +387,7 @@ bs_snapshot_init(BsSnapshot *snapshot) {
   snapshot->outputs = bs_hash_table_new_full_map(bs_hash_table_destroy_output);
   snapshot->apps = bs_hash_table_new_full_map(bs_hash_table_destroy_app_state);
   snapshot->dock_items = bs_hash_table_new_full_map(bs_hash_table_destroy_dock_item);
+  snapshot->pinned_app_ids = g_ptr_array_new_with_free_func(g_free);
 }
 
 void
@@ -304,6 +401,7 @@ bs_snapshot_clear(BsSnapshot *snapshot) {
   g_clear_pointer(&snapshot->outputs, g_hash_table_unref);
   g_clear_pointer(&snapshot->apps, g_hash_table_unref);
   g_clear_pointer(&snapshot->dock_items, g_hash_table_unref);
+  g_clear_pointer(&snapshot->pinned_app_ids, g_ptr_array_unref);
   memset(snapshot->topic_generations, 0, sizeof(snapshot->topic_generations));
   snapshot->generation = 0;
 }
@@ -352,13 +450,13 @@ bs_snapshot_serialize_topic_payload_json(const BsSnapshot *snapshot, BsTopic top
       bs_json_append_workspaces_payload(json, snapshot);
       break;
     case BS_TOPIC_DOCK:
-      g_string_append(json, "{\"items\":[]}");
+      bs_json_append_dock_payload(json, snapshot);
       break;
     case BS_TOPIC_TRAY:
       g_string_append(json, "{\"items\":[]}");
       break;
     case BS_TOPIC_SETTINGS:
-      g_string_append(json, "{\"config_loaded\":true}");
+      bs_json_append_settings_payload(json, snapshot);
       break;
     default:
       g_string_append(json, "{}");

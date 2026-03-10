@@ -21,5 +21,11 @@ void bs_niri_backend_stop(BsNiriBackend *backend);
 
 bool bs_niri_backend_request_initial_snapshot(BsNiriBackend *backend, GError **error);
 bool bs_niri_backend_subscribe_event_stream(BsNiriBackend *backend, GError **error);
+bool bs_niri_backend_focus_window(BsNiriBackend *backend,
+                                  const char *window_id,
+                                  GError **error);
+bool bs_niri_backend_focus_workspace(BsNiriBackend *backend,
+                                     const char *workspace_id,
+                                     GError **error);
 
 #endif

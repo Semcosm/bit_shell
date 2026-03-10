@@ -10,6 +10,7 @@
 
 typedef struct _BsStateStore BsStateStore;
 typedef void (*BsStateStoreObserver)(BsStateStore *store, BsTopic topic, gpointer user_data);
+typedef void (*BsStateStoreDerivedUpdater)(BsStateStore *store, gpointer user_data);
 
 BsStateStore *bs_state_store_new(void);
 void bs_state_store_free(BsStateStore *store);
@@ -17,6 +18,9 @@ void bs_state_store_free(BsStateStore *store);
 void bs_state_store_set_observer(BsStateStore *store,
                                  BsStateStoreObserver observer,
                                  gpointer user_data);
+void bs_state_store_set_derived_updater(BsStateStore *store,
+                                        BsStateStoreDerivedUpdater updater,
+                                        gpointer user_data);
 
 BsSnapshot *bs_state_store_snapshot(BsStateStore *store);
 uint64_t bs_state_store_generation(const BsStateStore *store);
@@ -46,5 +50,8 @@ void bs_state_store_set_window_focus_timestamp(BsStateStore *store,
                                                const char *window_id,
                                                bool has_value,
                                                uint64_t focus_ts);
+void bs_state_store_replace_apps(BsStateStore *store, GPtrArray *apps);
+void bs_state_store_replace_dock_items(BsStateStore *store, GPtrArray *dock_items);
+void bs_state_store_replace_pinned_app_ids(BsStateStore *store, GPtrArray *pinned_app_ids);
 
 #endif

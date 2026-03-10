@@ -56,10 +56,14 @@ typedef struct {
 
 typedef struct {
   char *app_key;
+  char *desktop_id;
+  char *name;
+  char *icon_name;
   GPtrArray *window_ids;
   bool pinned;
   bool running;
   bool focused;
+  int pinned_index;
   uint64_t last_focus_ts;
 } BsDockItem;
 

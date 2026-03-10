@@ -29,5 +29,23 @@ int bs_shelld_app_run(BsShelldApp *app, GError **error);
 BsStateStore *bs_shelld_app_state_store(BsShelldApp *app);
 BsCommandRouter *bs_shelld_app_command_router(BsShelldApp *app);
 const BsShelldConfig *bs_shelld_app_config(const BsShelldApp *app);
+bool bs_shelld_app_launch_app(BsShelldApp *app,
+                              const char *desktop_id,
+                              GError **error);
+bool bs_shelld_app_activate_app(BsShelldApp *app,
+                                const char *app_key,
+                                GError **error);
+bool bs_shelld_app_focus_window(BsShelldApp *app,
+                                const char *window_id,
+                                GError **error);
+bool bs_shelld_app_switch_workspace(BsShelldApp *app,
+                                    const char *workspace_id,
+                                    GError **error);
+bool bs_shelld_app_pin_app(BsShelldApp *app,
+                           const char *app_key,
+                           GError **error);
+bool bs_shelld_app_unpin_app(BsShelldApp *app,
+                             const char *app_key,
+                             GError **error);
 
 #endif

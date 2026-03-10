@@ -9,13 +9,20 @@ struct _BsStateStore {
   guint update_depth;
   BsStateStoreObserver observer;
   gpointer observer_user_data;
+  BsStateStoreDerivedUpdater derived_updater;
+  gpointer derived_updater_user_data;
 };
 
 static BsWindow *bs_window_dup(const BsWindow *window);
 static BsWorkspace *bs_workspace_dup(const BsWorkspace *workspace);
 static BsOutput *bs_output_dup(const BsOutput *output);
+static BsAppState *bs_app_state_dup(const BsAppState *app_state);
+static BsDockItem *bs_dock_item_dup(const BsDockItem *dock_item);
+static GPtrArray *bs_string_ptr_array_dup(GPtrArray *array);
 static void bs_state_store_rebuild_workspace_emptiness(BsStateStore *store);
 static void bs_state_store_refresh_shell_state(BsStateStore *store);
+static void bs_state_store_refresh_app_pins(BsStateStore *store);
+static void bs_state_store_run_derived_updater(BsStateStore *store);
 static void bs_state_store_commit_pending(BsStateStore *store);
 
 void
@@ -79,6 +86,9 @@ bs_dock_item_clear(BsDockItem *dock_item) {
     return;
   }
   g_free(dock_item->app_key);
+  g_free(dock_item->desktop_id);
+  g_free(dock_item->name);
+  g_free(dock_item->icon_name);
   if (dock_item->window_ids != NULL) {
     g_ptr_array_unref(dock_item->window_ids);
   }
@@ -138,6 +148,64 @@ bs_output_dup(const BsOutput *output) {
   copy->height = output->height;
   copy->scale = output->scale;
   copy->focused = output->focused;
+  return copy;
+}
+
+static BsAppState *
+bs_app_state_dup(const BsAppState *app_state) {
+  BsAppState *copy = NULL;
+
+  if (app_state == NULL) {
+    return NULL;
+  }
+
+  copy = g_new0(BsAppState, 1);
+  copy->desktop_id = g_strdup(app_state->desktop_id);
+  copy->app_id = g_strdup(app_state->app_id);
+  copy->name = g_strdup(app_state->name);
+  copy->icon_name = g_strdup(app_state->icon_name);
+  copy->pinned = app_state->pinned;
+  copy->recent_score = app_state->recent_score;
+  copy->launch_count = app_state->launch_count;
+  return copy;
+}
+
+static GPtrArray *
+bs_string_ptr_array_dup(GPtrArray *array) {
+  GPtrArray *copy = NULL;
+
+  copy = g_ptr_array_new_with_free_func(g_free);
+  if (array == NULL) {
+    return copy;
+  }
+
+  for (guint i = 0; i < array->len; i++) {
+    const char *value = g_ptr_array_index(array, i);
+    g_ptr_array_add(copy, g_strdup(value));
+  }
+
+  return copy;
+}
+
+static BsDockItem *
+bs_dock_item_dup(const BsDockItem *dock_item) {
+  BsDockItem *copy = NULL;
+
+  if (dock_item == NULL) {
+    return NULL;
+  }
+
+  copy = g_new0(BsDockItem, 1);
+  copy->app_key = g_strdup(dock_item->app_key);
+  copy->desktop_id = g_strdup(dock_item->desktop_id);
+  copy->name = g_strdup(dock_item->name);
+  copy->icon_name = g_strdup(dock_item->icon_name);
+  copy->window_ids = bs_string_ptr_array_dup(dock_item->window_ids);
+  copy->pinned = dock_item->pinned;
+  copy->running = dock_item->running;
+  copy->focused = dock_item->focused;
+  copy->pinned_index = dock_item->pinned_index;
+  copy->last_focus_ts = dock_item->last_focus_ts;
   return copy;
 }
 
@@ -238,6 +306,43 @@ bs_state_store_refresh_shell_state(BsStateStore *store) {
   }
 }
 
+static void
+bs_state_store_refresh_app_pins(BsStateStore *store) {
+  GHashTable *pinned_set = NULL;
+  GHashTableIter iter;
+  gpointer value = NULL;
+
+  g_return_if_fail(store != NULL);
+
+  pinned_set = g_hash_table_new(g_str_hash, g_str_equal);
+  if (store->snapshot.pinned_app_ids != NULL) {
+    for (guint i = 0; i < store->snapshot.pinned_app_ids->len; i++) {
+      const char *desktop_id = g_ptr_array_index(store->snapshot.pinned_app_ids, i);
+      if (desktop_id != NULL && *desktop_id != '\0') {
+        g_hash_table_add(pinned_set, (gpointer) desktop_id);
+      }
+    }
+  }
+
+  g_hash_table_iter_init(&iter, store->snapshot.apps);
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    BsAppState *app_state = value;
+    app_state->pinned = app_state->desktop_id != NULL
+                        && g_hash_table_contains(pinned_set, app_state->desktop_id);
+  }
+
+  g_hash_table_unref(pinned_set);
+}
+
+static void
+bs_state_store_run_derived_updater(BsStateStore *store) {
+  g_return_if_fail(store != NULL);
+
+  if (store->derived_updater != NULL) {
+    store->derived_updater(store, store->derived_updater_user_data);
+  }
+}
+
 BsStateStore *
 bs_state_store_new(void) {
   BsStateStore *store = g_new0(BsStateStore, 1);
@@ -262,6 +367,15 @@ bs_state_store_set_observer(BsStateStore *store,
   g_return_if_fail(store != NULL);
   store->observer = observer;
   store->observer_user_data = user_data;
+}
+
+void
+bs_state_store_set_derived_updater(BsStateStore *store,
+                                   BsStateStoreDerivedUpdater updater,
+                                   gpointer user_data) {
+  g_return_if_fail(store != NULL);
+  store->derived_updater = updater;
+  store->derived_updater_user_data = user_data;
 }
 
 BsSnapshot *
@@ -430,6 +544,7 @@ bs_state_store_replace_windows(BsStateStore *store, GPtrArray *windows) {
 
   bs_state_store_rebuild_workspace_emptiness(store);
   bs_state_store_refresh_shell_state(store);
+  bs_state_store_run_derived_updater(store);
   bs_state_store_mark_topic_changed(store, BS_TOPIC_WINDOWS);
   bs_state_store_mark_topic_changed(store, BS_TOPIC_WORKSPACES);
   bs_state_store_mark_topic_changed(store, BS_TOPIC_SHELL);
@@ -457,6 +572,7 @@ bs_state_store_upsert_window(BsStateStore *store, const BsWindow *window) {
                        bs_window_dup(window));
   bs_state_store_rebuild_workspace_emptiness(store);
   bs_state_store_refresh_shell_state(store);
+  bs_state_store_run_derived_updater(store);
   bs_state_store_mark_topic_changed(store, BS_TOPIC_WINDOWS);
   bs_state_store_mark_topic_changed(store, BS_TOPIC_WORKSPACES);
   bs_state_store_mark_topic_changed(store, BS_TOPIC_SHELL);
@@ -473,6 +589,7 @@ bs_state_store_remove_window(BsStateStore *store, const char *window_id) {
 
   bs_state_store_rebuild_workspace_emptiness(store);
   bs_state_store_refresh_shell_state(store);
+  bs_state_store_run_derived_updater(store);
   bs_state_store_mark_topic_changed(store, BS_TOPIC_WINDOWS);
   bs_state_store_mark_topic_changed(store, BS_TOPIC_WORKSPACES);
   bs_state_store_mark_topic_changed(store, BS_TOPIC_SHELL);
@@ -528,6 +645,7 @@ bs_state_store_set_window_focus(BsStateStore *store, const char *window_id) {
   }
 
   bs_state_store_refresh_shell_state(store);
+  bs_state_store_run_derived_updater(store);
   bs_state_store_mark_topic_changed(store, BS_TOPIC_WINDOWS);
   bs_state_store_mark_topic_changed(store, BS_TOPIC_SHELL);
 }
@@ -548,5 +666,58 @@ bs_state_store_set_window_focus_timestamp(BsStateStore *store,
   }
 
   window->focus_ts = has_value ? focus_ts : 0;
+  bs_state_store_run_derived_updater(store);
   bs_state_store_mark_topic_changed(store, BS_TOPIC_WINDOWS);
+}
+
+void
+bs_state_store_replace_apps(BsStateStore *store, GPtrArray *apps) {
+  g_return_if_fail(store != NULL);
+
+  g_hash_table_remove_all(store->snapshot.apps);
+  if (apps != NULL) {
+    for (guint i = 0; i < apps->len; i++) {
+      BsAppState *app_state = g_ptr_array_index(apps, i);
+      if (app_state == NULL || app_state->desktop_id == NULL) {
+        continue;
+      }
+      g_hash_table_replace(store->snapshot.apps,
+                           g_strdup(app_state->desktop_id),
+                           bs_app_state_dup(app_state));
+    }
+  }
+
+  bs_state_store_refresh_app_pins(store);
+  bs_state_store_run_derived_updater(store);
+}
+
+void
+bs_state_store_replace_dock_items(BsStateStore *store, GPtrArray *dock_items) {
+  g_return_if_fail(store != NULL);
+
+  g_hash_table_remove_all(store->snapshot.dock_items);
+  if (dock_items != NULL) {
+    for (guint i = 0; i < dock_items->len; i++) {
+      BsDockItem *dock_item = g_ptr_array_index(dock_items, i);
+      if (dock_item == NULL || dock_item->app_key == NULL) {
+        continue;
+      }
+      g_hash_table_replace(store->snapshot.dock_items,
+                           g_strdup(dock_item->app_key),
+                           bs_dock_item_dup(dock_item));
+    }
+  }
+
+  bs_state_store_mark_topic_changed(store, BS_TOPIC_DOCK);
+}
+
+void
+bs_state_store_replace_pinned_app_ids(BsStateStore *store, GPtrArray *pinned_app_ids) {
+  g_return_if_fail(store != NULL);
+
+  g_clear_pointer(&store->snapshot.pinned_app_ids, g_ptr_array_unref);
+  store->snapshot.pinned_app_ids = bs_string_ptr_array_dup(pinned_app_ids);
+  bs_state_store_refresh_app_pins(store);
+  bs_state_store_run_derived_updater(store);
+  bs_state_store_mark_topic_changed(store, BS_TOPIC_SETTINGS);
 }

@@ -4,6 +4,7 @@
 
 #include <glib.h>
 #include <glib/gstdio.h>
+#include <json-glib/json-glib.h>
 
 struct _BsSettingsService {
   BsStateStore *store;
@@ -35,6 +36,116 @@ bs_settings_service_ensure_parent_dir(const char *path, GError **error) {
     return false;
   }
 
+  return true;
+}
+
+static GPtrArray *
+bs_settings_service_dup_pinned_apps(BsSettingsService *service) {
+  BsSnapshot *snapshot = NULL;
+  GPtrArray *copy = NULL;
+
+  g_return_val_if_fail(service != NULL, NULL);
+
+  snapshot = bs_state_store_snapshot(service->store);
+  copy = g_ptr_array_new_with_free_func(g_free);
+  if (snapshot == NULL || snapshot->pinned_app_ids == NULL) {
+    return copy;
+  }
+
+  for (guint i = 0; i < snapshot->pinned_app_ids->len; i++) {
+    const char *desktop_id = g_ptr_array_index(snapshot->pinned_app_ids, i);
+    if (desktop_id != NULL && *desktop_id != '\0') {
+      g_ptr_array_add(copy, g_strdup(desktop_id));
+    }
+  }
+
+  return copy;
+}
+
+static void
+bs_settings_service_append_string_array_json(GString *content, GPtrArray *values) {
+  g_return_if_fail(content != NULL);
+
+  g_string_append(content, "[");
+  if (values != NULL) {
+    for (guint i = 0; i < values->len; i++) {
+      char *escaped = NULL;
+      const char *value = g_ptr_array_index(values, i);
+
+      if (i > 0) {
+        g_string_append(content, ",");
+      }
+
+      escaped = g_strescape(value != NULL ? value : "", NULL);
+      g_string_append_printf(content, "\"%s\"", escaped != NULL ? escaped : "");
+      g_free(escaped);
+    }
+  }
+  g_string_append(content, "]");
+}
+
+static bool
+bs_settings_service_parse_state(BsSettingsService *service,
+                                const char *contents,
+                                GError **error) {
+  g_autoptr(JsonParser) parser = NULL;
+  g_autoptr(GPtrArray) pinned_app_ids = NULL;
+  g_autoptr(GHashTable) seen = NULL;
+  JsonNode *root = NULL;
+  JsonObject *root_object = NULL;
+  JsonArray *pinned_apps = NULL;
+
+  g_return_val_if_fail(service != NULL, false);
+
+  if (contents == NULL || *contents == '\0') {
+    bs_state_store_begin_update(service->store);
+    bs_state_store_replace_pinned_app_ids(service->store, NULL);
+    bs_state_store_finish_update(service->store);
+    return true;
+  }
+
+  parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, contents, -1, error)) {
+    return false;
+  }
+
+  root = json_parser_get_root(parser);
+  if (root == NULL || !JSON_NODE_HOLDS_OBJECT(root)) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "state.json root is not an object");
+    return false;
+  }
+
+  root_object = json_node_get_object(root);
+  pinned_app_ids = g_ptr_array_new_with_free_func(g_free);
+  seen = g_hash_table_new(g_str_hash, g_str_equal);
+
+  if (json_object_has_member(root_object, "pinned_apps")) {
+    JsonNode *pinned_node = json_object_get_member(root_object, "pinned_apps");
+
+    if (!JSON_NODE_HOLDS_ARRAY(pinned_node)) {
+      g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "state.json pinned_apps is not an array");
+      return false;
+    }
+
+    pinned_apps = json_node_get_array(pinned_node);
+    for (guint i = 0; i < json_array_get_length(pinned_apps); i++) {
+      const char *desktop_id = json_array_get_string_element(pinned_apps, i);
+
+      if (desktop_id == NULL || *desktop_id == '\0') {
+        continue;
+      }
+      if (g_hash_table_contains(seen, desktop_id)) {
+        continue;
+      }
+
+      g_hash_table_add(seen, (gpointer) desktop_id);
+      g_ptr_array_add(pinned_app_ids, g_strdup(desktop_id));
+    }
+  }
+
+  bs_state_store_begin_update(service->store);
+  bs_state_store_replace_pinned_app_ids(service->store, pinned_app_ids);
+  bs_state_store_finish_update(service->store);
   return true;
 }
 
@@ -72,12 +183,16 @@ bs_settings_service_build_config_stub(const BsShellConfig *config) {
 
 static char *
 bs_settings_service_build_state_stub(BsSettingsService *service) {
+  g_autoptr(GPtrArray) pinned_app_ids = NULL;
   GString *content = g_string_new(NULL);
 
+  pinned_app_ids = bs_settings_service_dup_pinned_apps(service);
   g_string_append_printf(content,
-                         "{\n  \"generation\": %" G_GUINT64_FORMAT ",\n  \"settings_dirty\": %s,\n  \"pinned_apps\": [],\n  \"recent_apps\": [],\n  \"favorites\": [],\n  \"recent_workspaces\": []\n}\n",
+                         "{\n  \"generation\": %" G_GUINT64_FORMAT ",\n  \"settings_dirty\": %s,\n  \"pinned_apps\": ",
                          bs_state_store_generation(service->store),
                          service->dirty_state ? "true" : "false");
+  bs_settings_service_append_string_array_json(content, pinned_app_ids);
+  g_string_append(content, ",\n  \"recent_apps\": [],\n  \"favorites\": [],\n  \"recent_workspaces\": []\n}\n");
   return g_string_free(content, false);
 }
 
@@ -159,12 +274,7 @@ bs_settings_service_load(BsSettingsService *service, GError **error) {
   if (config_contents != NULL && *config_contents != '\0') {
     g_message("[bit_shelld] settings load stub read config from %s (parser TODO)", service->config_path);
   }
-  if (state_contents != NULL && *state_contents != '\0') {
-    g_message("[bit_shelld] settings load stub read state from %s (parser TODO)", service->state_path);
-  }
-
-  bs_state_store_mark_topic_changed(service->store, BS_TOPIC_SETTINGS);
-  return true;
+  return bs_settings_service_parse_state(service, state_contents, error);
 }
 
 bool

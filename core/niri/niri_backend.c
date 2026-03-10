@@ -58,6 +58,10 @@ static bool bs_niri_backend_refresh_outputs(BsNiriBackend *backend, GError **err
 static GSocketConnection *bs_niri_backend_open_connection(BsNiriBackend *backend, GError **error);
 static bool bs_niri_backend_write_request(GOutputStream *output, const char *request, GError **error);
 static char *bs_niri_backend_read_reply_line(GInputStream *input, GError **error);
+static bool bs_niri_backend_request(BsNiriBackend *backend,
+                                    const char *request,
+                                    JsonNode **root_out,
+                                    GError **error);
 static JsonNode *bs_niri_backend_parse_json_line(const char *line, GError **error);
 static JsonObject *bs_niri_backend_reply_ok_object(JsonNode *root, const char *member_name, GError **error);
 static const char *bs_json_object_get_string_member_or(JsonObject *object,
@@ -252,6 +256,74 @@ bs_niri_backend_parse_json_line(const char *line, GError **error) {
   copy = json_node_copy(json_parser_get_root(parser));
   g_object_unref(parser);
   return copy;
+}
+
+static bool
+bs_niri_backend_request(BsNiriBackend *backend,
+                        const char *request,
+                        JsonNode **root_out,
+                        GError **error) {
+  g_autoptr(GSocketConnection) connection = NULL;
+  g_autofree char *reply_line = NULL;
+  JsonNode *root = NULL;
+  JsonObject *root_object = NULL;
+  JsonNode *err_node = NULL;
+
+  g_return_val_if_fail(backend != NULL, false);
+  g_return_val_if_fail(request != NULL, false);
+
+  if (root_out != NULL) {
+    *root_out = NULL;
+  }
+
+  connection = bs_niri_backend_open_connection(backend, error);
+  if (connection == NULL) {
+    return false;
+  }
+
+  if (!bs_niri_backend_write_request(g_io_stream_get_output_stream(G_IO_STREAM(connection)),
+                                     request,
+                                     error)) {
+    return false;
+  }
+
+  reply_line = bs_niri_backend_read_reply_line(g_io_stream_get_input_stream(G_IO_STREAM(connection)),
+                                               error);
+  if (reply_line == NULL) {
+    return false;
+  }
+
+  root = bs_niri_backend_parse_json_line(reply_line, error);
+  if (root == NULL) {
+    return false;
+  }
+  if (!JSON_NODE_HOLDS_OBJECT(root)) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "niri reply root is not an object");
+    json_node_unref(root);
+    return false;
+  }
+
+  root_object = json_node_get_object(root);
+  if (json_object_has_member(root_object, "Err")) {
+    err_node = json_object_get_member(root_object, "Err");
+    g_set_error(error,
+                G_IO_ERROR,
+                G_IO_ERROR_FAILED,
+                "niri error: %s",
+                err_node != NULL && JSON_NODE_HOLDS_VALUE(err_node)
+                  ? json_node_get_string(err_node)
+                  : "request failed");
+    json_node_unref(root);
+    return false;
+  }
+
+  if (root_out != NULL) {
+    *root_out = root;
+  } else {
+    json_node_unref(root);
+  }
+
+  return true;
 }
 
 static JsonObject *
@@ -520,8 +592,6 @@ bs_niri_backend_parse_window(BsNiriBackend *backend, JsonObject *object, BsWindo
 
 static bool
 bs_niri_backend_refresh_outputs(BsNiriBackend *backend, GError **error) {
-  g_autoptr(GSocketConnection) connection = NULL;
-  g_autofree char *reply_line = NULL;
   JsonNode *root = NULL;
   JsonObject *ok_object = NULL;
   JsonArray *outputs_array = NULL;
@@ -529,23 +599,7 @@ bs_niri_backend_refresh_outputs(BsNiriBackend *backend, GError **error) {
 
   g_return_val_if_fail(backend != NULL, false);
 
-  connection = bs_niri_backend_open_connection(backend, error);
-  if (connection == NULL) {
-    return false;
-  }
-  if (!bs_niri_backend_write_request(g_io_stream_get_output_stream(G_IO_STREAM(connection)),
-                                     "\"Outputs\"",
-                                     error)) {
-    return false;
-  }
-  reply_line = bs_niri_backend_read_reply_line(g_io_stream_get_input_stream(G_IO_STREAM(connection)),
-                                               error);
-  if (reply_line == NULL) {
-    return false;
-  }
-
-  root = bs_niri_backend_parse_json_line(reply_line, error);
-  if (root == NULL) {
+  if (!bs_niri_backend_request(backend, "\"Outputs\"", &root, error)) {
     return false;
   }
 
@@ -895,5 +949,73 @@ bool
 bs_niri_backend_subscribe_event_stream(BsNiriBackend *backend, GError **error) {
   g_return_val_if_fail(backend != NULL, false);
   (void) error;
+  return true;
+}
+
+bool
+bs_niri_backend_focus_window(BsNiriBackend *backend,
+                             const char *window_id,
+                             GError **error) {
+  JsonNode *root = NULL;
+  guint64 parsed_id = 0;
+  char *end = NULL;
+  g_autofree char *request = NULL;
+
+  g_return_val_if_fail(backend != NULL, false);
+  g_return_val_if_fail(window_id != NULL, false);
+
+  parsed_id = g_ascii_strtoull(window_id, &end, 10);
+  if (end == window_id || (end != NULL && *end != '\0')) {
+    g_set_error(error,
+                G_IO_ERROR,
+                G_IO_ERROR_INVALID_ARGUMENT,
+                "window_id is not a numeric niri window id: %s",
+                window_id);
+    return false;
+  }
+
+  request = g_strdup_printf("{\"Action\":{\"FocusWindow\":{\"id\":%" G_GUINT64_FORMAT "}}}",
+                            parsed_id);
+  if (!bs_niri_backend_request(backend, request, &root, error)) {
+    return false;
+  }
+
+  if (root != NULL) {
+    json_node_unref(root);
+  }
+  return true;
+}
+
+bool
+bs_niri_backend_focus_workspace(BsNiriBackend *backend,
+                                const char *workspace_id,
+                                GError **error) {
+  JsonNode *root = NULL;
+  guint64 parsed_id = 0;
+  char *end = NULL;
+  g_autofree char *request = NULL;
+
+  g_return_val_if_fail(backend != NULL, false);
+  g_return_val_if_fail(workspace_id != NULL, false);
+
+  parsed_id = g_ascii_strtoull(workspace_id, &end, 10);
+  if (end == workspace_id || (end != NULL && *end != '\0')) {
+    g_set_error(error,
+                G_IO_ERROR,
+                G_IO_ERROR_INVALID_ARGUMENT,
+                "workspace_id is not a numeric niri workspace id: %s",
+                workspace_id);
+    return false;
+  }
+
+  request = g_strdup_printf("{\"Action\":{\"FocusWorkspace\":{\"reference\":{\"Id\":%" G_GUINT64_FORMAT "}}}}",
+                            parsed_id);
+  if (!bs_niri_backend_request(backend, request, &root, error)) {
+    return false;
+  }
+
+  if (root != NULL) {
+    json_node_unref(root);
+  }
   return true;
 }

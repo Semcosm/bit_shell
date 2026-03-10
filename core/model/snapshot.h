@@ -16,6 +16,7 @@ typedef struct {
   GHashTable *outputs;
   GHashTable *apps;
   GHashTable *dock_items;
+  GPtrArray *pinned_app_ids;
 } BsSnapshot;
 
 void bs_snapshot_init(BsSnapshot *snapshot);
