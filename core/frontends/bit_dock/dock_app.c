@@ -118,6 +118,11 @@ static void bs_dock_app_sync_ui(BsDockApp *app);
 static void bs_dock_app_recompute_visual_indices(BsDockApp *app);
 static void bs_dock_app_refresh_magnification(BsDockApp *app);
 static void bs_dock_app_update_hover_from_items_box(BsDockApp *app, double x, double y);
+static bool bs_dock_app_compute_items_box_point_in_layout(BsDockApp *app,
+                                                          double x,
+                                                          double y,
+                                                          double *layout_x,
+                                                          double *layout_y);
 static bool bs_dock_app_update_root_box_top_margin(BsDockApp *app, int margin_top);
 static bool bs_dock_app_update_items_box_margins(BsDockApp *app,
                                                  int margin_start,
@@ -351,24 +356,56 @@ bs_dock_app_ensure_tick(BsDockApp *app) {
 
 static void
 bs_dock_app_update_hover_from_items_box(BsDockApp *app, double x, double y) {
+  double layout_x = 0.0;
+  double layout_y = 0.0;
+
   g_return_if_fail(app != NULL);
   g_return_if_fail(app->items_box != NULL);
 
+  if (!bs_dock_app_compute_items_box_point_in_layout(app, x, y, &layout_x, &layout_y)) {
+    return;
+  }
+
   if (app->hover_active
-      && fabs(app->pointer_x - x) < 0.01
-      && fabs(app->pointer_y - y) < 0.01) {
+      && fabs(app->pointer_x - layout_x) < 0.01
+      && fabs(app->pointer_y - layout_y) < 0.01) {
     return;
   }
 
   app->hover_active = true;
-  app->pointer_x = x;
-  app->pointer_y = y;
+  app->pointer_x = layout_x;
+  app->pointer_y = layout_y;
   bs_dock_app_refresh_magnification(app);
 }
 
 static double
 bs_dock_app_base_gap(BsDockApp *app) {
   return MAX(bs_dock_app_base_step(app) - BS_DOCK_BASE_ITEM_SIZE, 0.0);
+}
+
+static bool
+bs_dock_app_compute_items_box_point_in_layout(BsDockApp *app,
+                                              double x,
+                                              double y,
+                                              double *layout_x,
+                                              double *layout_y) {
+  graphene_point_t local_point;
+  graphene_point_t layout_point;
+
+  g_return_val_if_fail(app != NULL, false);
+  g_return_val_if_fail(app->items_box != NULL, false);
+  g_return_val_if_fail(app->layout_box != NULL, false);
+  g_return_val_if_fail(layout_x != NULL, false);
+  g_return_val_if_fail(layout_y != NULL, false);
+
+  local_point = GRAPHENE_POINT_INIT((float) x, (float) y);
+  if (!gtk_widget_compute_point(app->items_box, app->layout_box, &local_point, &layout_point)) {
+    return false;
+  }
+
+  *layout_x = layout_point.x;
+  *layout_y = layout_point.y;
+  return true;
 }
 
 static bool
@@ -943,10 +980,16 @@ bs_dock_app_update_item_widgets(BsDockApp *app,
 
 static void
 bs_dock_app_recompute_visual_indices(BsDockApp *app) {
+  double items_origin_x = 0.0;
+  double items_origin_y = 0.0;
+
   g_return_if_fail(app != NULL);
   g_return_if_fail(app->ordered_item_widgets != NULL);
 
   g_ptr_array_set_size(app->ordered_item_widgets, 0);
+  if (!bs_dock_app_compute_items_box_point_in_layout(app, 0.0, 0.0, &items_origin_x, &items_origin_y)) {
+    items_origin_x = 0.0;
+  }
 
   for (guint i = 0; i < app->items->len; i++) {
     const BsDockItemView *item = g_ptr_array_index(app->items, i);
@@ -962,7 +1005,7 @@ bs_dock_app_recompute_visual_indices(BsDockApp *app) {
     }
 
     widgets->visual_index = i;
-    widgets->base_center_x = bs_dock_app_base_center_for_index(app, i);
+    widgets->base_center_x = items_origin_x + bs_dock_app_base_center_for_index(app, i);
     g_ptr_array_add(app->ordered_item_widgets, widgets);
   }
 }
