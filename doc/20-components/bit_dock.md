@@ -18,6 +18,7 @@
 - 右键：应用动作菜单
 - 滚轮：切换同 app 窗口
 - 拖拽：重排 pinned
+- hover：当前 item 与左右各 2 个邻居做递减 magnification
 
 ## 激活规则
 
@@ -65,3 +66,29 @@
 - `bit_shelld` 基于 `StateStore` 权威状态决定 app 激活与多窗口切换目标
 
 当前 backend 已支持通过 `pin_app` / `unpin_app` 命令修改 pinned 状态，并立即同步到 `state.json`。
+
+## 当前前端实现约束
+
+当前 `bit_dock` GTK 前端已落地以下交互语义：
+
+- hover magnification 只影响当前 item 与左右各 2 个邻居，不做整排连续函数
+- magnification 由鼠标在当前 item 内的横向位置插值驱动
+- motion 事件挂在 item 外层 slot，而不是按钮本体，以降低放大后边界抖动
+- hover leave 采用短延迟清理，避免相邻 item 切换时出现 enter/leave 抖动
+- dock 数据刷新后会重新校验 hover 关联；若 hovered item 被删除、替换或顺序失效，则立即清空 hover 状态
+
+## 当前视觉分层
+
+当前实现将位移与缩放拆到两层：
+
+- `dock-slot`：负责纵向抬升
+- `dock-item`：负责 magnification scale
+- `dock-indicator`：只表达 running/focused 指示，不参与 scale 决策
+
+状态叠加规则当前固定为：
+
+- 普通：`translateY(0)`
+- focused：`translateY(-2px)`
+- hovered：`translateY(-4px)`
+- focused + hovered：`translateY(-5px)`
+- magnification：仅通过 `dock-item.mag-*` 控制 `scale`

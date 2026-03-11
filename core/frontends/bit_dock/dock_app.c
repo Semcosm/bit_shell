@@ -7,6 +7,7 @@
 
 #define BS_DOCK_APP_ID "io.bit_shell.bit_dock"
 #define BS_DOCK_RECONNECT_DELAY_MS 2000U
+#define BS_DOCK_HOVER_CLEAR_DELAY_MS 16U
 #define BS_DOCK_NAMESPACE "bit-dock"
 
 typedef struct {
@@ -37,6 +38,8 @@ typedef struct {
   GtkWidget *icon_image;
   GtkWidget *label;
   BsDockItemActionData *action;
+  guint visual_index;
+  guint mag_bucket;
 } BsDockItemWidgets;
 
 struct _BsDockApp {
@@ -52,8 +55,13 @@ struct _BsDockApp {
   GCancellable *read_cancellable;
   GPtrArray *items;
   GHashTable *item_widgets_by_app_key;
+  BsDockItemWidgets *hovered_widgets;
+  char *hovered_app_key;
   char *socket_path;
+  double hover_x_ratio;
+  guint hover_clear_source_id;
   guint reconnect_source_id;
+  bool hover_active;
   bool ipc_ready;
 };
 
@@ -68,6 +76,12 @@ static void bs_dock_app_update_item_widgets(BsDockApp *app,
                                             BsDockItemWidgets *widgets,
                                             const BsDockItemView *item);
 static void bs_dock_app_sync_ui(BsDockApp *app);
+static void bs_dock_app_recompute_visual_indices(BsDockApp *app);
+static void bs_dock_app_refresh_magnification(BsDockApp *app);
+static void bs_dock_app_reset_hover_state(BsDockApp *app);
+static void bs_dock_app_validate_hover_state(BsDockApp *app, guint previous_item_count);
+static void bs_dock_app_cancel_hover_clear(BsDockApp *app);
+static void bs_dock_app_schedule_hover_clear(BsDockApp *app);
 static void bs_dock_app_apply_dock_payload(BsDockApp *app, JsonObject *payload);
 static GPtrArray *bs_dock_app_parse_dock_items(JsonObject *payload);
 static void bs_dock_app_log_dock_items(BsDockApp *app, const char *source);
@@ -96,6 +110,16 @@ static void bs_dock_app_on_item_secondary_pressed(GtkGestureClick *gesture,
                                                   gdouble x,
                                                   gdouble y,
                                                   gpointer user_data);
+static void bs_dock_app_on_item_enter(GtkEventControllerMotion *motion,
+                                      gdouble x,
+                                      gdouble y,
+                                      gpointer user_data);
+static void bs_dock_app_on_item_motion(GtkEventControllerMotion *motion,
+                                       gdouble x,
+                                       gdouble y,
+                                       gpointer user_data);
+static void bs_dock_app_on_item_leave(GtkEventControllerMotion *motion,
+                                      gpointer user_data);
 static gboolean bs_dock_app_on_item_scrolled(GtkEventControllerScroll *controller,
                                              gdouble dx,
                                              gdouble dy,
@@ -157,6 +181,7 @@ bs_dock_app_new(void) {
                                                        g_str_equal,
                                                        g_free,
                                                        bs_dock_item_widgets_free);
+  app->hover_x_ratio = 0.5;
   app->socket_path = (socket_override != NULL && *socket_override != '\0')
                        ? g_strdup(socket_override)
                        : bs_dock_app_default_socket_path();
@@ -175,12 +200,16 @@ bs_dock_app_free(BsDockApp *app) {
   if (app->reconnect_source_id != 0) {
     g_source_remove(app->reconnect_source_id);
   }
+  if (app->hover_clear_source_id != 0) {
+    g_source_remove(app->hover_clear_source_id);
+  }
   bs_dock_app_close_connection(app);
   g_clear_pointer(&app->items, g_ptr_array_unref);
   g_clear_pointer(&app->item_widgets_by_app_key, g_hash_table_unref);
   g_clear_object(&app->read_cancellable);
   g_clear_object(&app->socket_client);
   g_clear_object(&app->gtk_app);
+  g_free(app->hovered_app_key);
   g_free(app->socket_path);
   g_free(app);
 }
@@ -232,6 +261,144 @@ bs_dock_item_widgets_free(gpointer data) {
   }
   bs_dock_item_action_data_free(widgets->action);
   g_free(widgets);
+}
+
+static void
+bs_dock_app_reset_hover_state(BsDockApp *app) {
+  g_return_if_fail(app != NULL);
+
+  bs_dock_app_cancel_hover_clear(app);
+  app->hover_active = false;
+  app->hovered_widgets = NULL;
+  g_clear_pointer(&app->hovered_app_key, g_free);
+  app->hover_x_ratio = 0.5;
+}
+
+static void
+bs_dock_app_validate_hover_state(BsDockApp *app, guint previous_item_count) {
+  BsDockItemWidgets *current_widgets = NULL;
+
+  g_return_if_fail(app != NULL);
+
+  if (app->hovered_widgets == NULL) {
+    return;
+  }
+
+  if (previous_item_count != app->items->len
+      || app->hovered_app_key == NULL
+      || !g_hash_table_contains(app->item_widgets_by_app_key, app->hovered_app_key)) {
+    bs_dock_app_reset_hover_state(app);
+    return;
+  }
+
+  current_widgets = g_hash_table_lookup(app->item_widgets_by_app_key, app->hovered_app_key);
+  if (current_widgets != app->hovered_widgets) {
+    bs_dock_app_reset_hover_state(app);
+  }
+}
+
+static void
+bs_dock_app_cancel_hover_clear(BsDockApp *app) {
+  g_return_if_fail(app != NULL);
+
+  if (app->hover_clear_source_id != 0) {
+    g_source_remove(app->hover_clear_source_id);
+    app->hover_clear_source_id = 0;
+  }
+}
+
+static gboolean
+bs_dock_app_clear_hover_cb(gpointer user_data) {
+  BsDockApp *app = user_data;
+
+  g_return_val_if_fail(app != NULL, G_SOURCE_REMOVE);
+
+  app->hover_clear_source_id = 0;
+  if (app->hover_active && app->hovered_widgets != NULL) {
+    return G_SOURCE_REMOVE;
+  }
+
+  bs_dock_app_reset_hover_state(app);
+  bs_dock_app_refresh_magnification(app);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+bs_dock_app_schedule_hover_clear(BsDockApp *app) {
+  g_return_if_fail(app != NULL);
+
+  if (app->hover_clear_source_id != 0) {
+    return;
+  }
+
+  app->hover_clear_source_id = g_timeout_add(BS_DOCK_HOVER_CLEAR_DELAY_MS,
+                                             bs_dock_app_clear_hover_cb,
+                                             app);
+}
+
+static void
+bs_dock_app_set_hover_from_pointer(BsDockApp *app,
+                                   BsDockItemWidgets *widgets,
+                                   GtkWidget *event_widget,
+                                   gdouble x) {
+  int width = 0;
+
+  g_return_if_fail(app != NULL);
+
+  bs_dock_app_cancel_hover_clear(app);
+
+  width = event_widget != NULL ? gtk_widget_get_width(event_widget) : 0;
+  if (width <= 0) {
+    app->hover_x_ratio = 0.5;
+  } else {
+    app->hover_x_ratio = CLAMP(x / (double) width, 0.0, 1.0);
+  }
+
+  app->hover_active = widgets != NULL;
+  app->hovered_widgets = widgets;
+  g_free(app->hovered_app_key);
+  app->hovered_app_key = (widgets != NULL && widgets->action != NULL && widgets->action->app_key != NULL)
+                           ? g_strdup(widgets->action->app_key)
+                           : NULL;
+  bs_dock_app_refresh_magnification(app);
+}
+
+static void
+bs_dock_app_set_widget_mag_bucket(BsDockItemWidgets *widgets, guint bucket) {
+  static const char *const bucket_classes[] = {
+    "mag-0",
+    "mag-1",
+    "mag-2",
+    "mag-3",
+    "mag-4",
+    "mag-5",
+    "mag-6",
+    "mag-7",
+    "mag-8",
+    "mag-9",
+  };
+
+  g_return_if_fail(widgets != NULL);
+
+  bucket = MIN(bucket, G_N_ELEMENTS(bucket_classes) - 1);
+  if (widgets->mag_bucket == bucket) {
+    return;
+  }
+
+  if (widgets->mag_bucket < G_N_ELEMENTS(bucket_classes)) {
+    gtk_widget_remove_css_class(widgets->button, bucket_classes[widgets->mag_bucket]);
+  }
+
+  gtk_widget_add_css_class(widgets->button, bucket_classes[bucket]);
+  widgets->mag_bucket = bucket;
+}
+
+static guint
+bs_dock_app_scale_to_mag_bucket(double scale) {
+  double normalized = (scale - 1.0) / 0.02;
+  gint bucket = (gint) (normalized + 0.5);
+
+  return (guint) CLAMP(bucket, 0, 9);
 }
 
 static void
@@ -369,6 +536,70 @@ bs_dock_app_on_item_secondary_pressed(GtkGestureClick *gesture,
   }
 }
 
+static void
+bs_dock_app_on_item_enter(GtkEventControllerMotion *motion,
+                          gdouble x,
+                          gdouble y,
+                          gpointer user_data) {
+  GtkWidget *slot = user_data;
+  BsDockApp *app = NULL;
+  BsDockItemWidgets *widgets = NULL;
+
+  (void) motion;
+  (void) y;
+
+  g_return_if_fail(slot != NULL);
+
+  app = g_object_get_data(G_OBJECT(slot), "bs-dock-app");
+  widgets = g_object_get_data(G_OBJECT(slot), "bs-dock-widgets");
+  if (app == NULL || widgets == NULL) {
+    return;
+  }
+
+  bs_dock_app_set_hover_from_pointer(app, widgets, slot, x);
+}
+
+static void
+bs_dock_app_on_item_motion(GtkEventControllerMotion *motion,
+                           gdouble x,
+                           gdouble y,
+                           gpointer user_data) {
+  GtkWidget *slot = user_data;
+  BsDockApp *app = NULL;
+  BsDockItemWidgets *widgets = NULL;
+
+  (void) motion;
+  (void) y;
+
+  g_return_if_fail(slot != NULL);
+
+  app = g_object_get_data(G_OBJECT(slot), "bs-dock-app");
+  widgets = g_object_get_data(G_OBJECT(slot), "bs-dock-widgets");
+  if (app == NULL || widgets == NULL) {
+    return;
+  }
+
+  bs_dock_app_set_hover_from_pointer(app, widgets, slot, x);
+}
+
+static void
+bs_dock_app_on_item_leave(GtkEventControllerMotion *motion, gpointer user_data) {
+  GtkWidget *slot = user_data;
+  BsDockApp *app = NULL;
+
+  (void) motion;
+
+  g_return_if_fail(slot != NULL);
+
+  app = g_object_get_data(G_OBJECT(slot), "bs-dock-app");
+  if (app == NULL) {
+    return;
+  }
+
+  bs_dock_app_reset_hover_state(app);
+  bs_dock_app_schedule_hover_clear(app);
+}
+
 static gboolean
 bs_dock_app_on_item_scrolled(GtkEventControllerScroll *controller,
                              gdouble dx,
@@ -419,6 +650,7 @@ bs_dock_app_create_item_widgets(BsDockApp *app, const BsDockItemView *item) {
   GtkGesture *primary_click = NULL;
   GtkGesture *secondary_click = NULL;
   GtkEventController *scroll = NULL;
+  GtkEventController *motion = NULL;
 
   g_return_val_if_fail(app != NULL, NULL);
   g_return_val_if_fail(item != NULL, NULL);
@@ -447,10 +679,15 @@ bs_dock_app_create_item_widgets(BsDockApp *app, const BsDockItemView *item) {
   widgets->indicator = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   gtk_widget_add_css_class(widgets->indicator, "dock-indicator");
   gtk_widget_set_halign(widgets->indicator, GTK_ALIGN_CENTER);
+  gtk_widget_set_can_target(widgets->indicator, false);
 
   widgets->action = g_new0(BsDockItemActionData, 1);
+  widgets->mag_bucket = G_MAXUINT;
   g_object_set_data(G_OBJECT(widgets->button), "bs-dock-app", app);
   g_object_set_data(G_OBJECT(widgets->button), "bs-dock-action", widgets->action);
+  g_object_set_data(G_OBJECT(widgets->button), "bs-dock-widgets", widgets);
+  g_object_set_data(G_OBJECT(widgets->slot), "bs-dock-app", app);
+  g_object_set_data(G_OBJECT(widgets->slot), "bs-dock-widgets", widgets);
 
   primary_click = gtk_gesture_click_new();
   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(primary_click), GDK_BUTTON_PRIMARY);
@@ -475,6 +712,22 @@ bs_dock_app_create_item_widgets(BsDockApp *app, const BsDockItemView *item) {
                    G_CALLBACK(bs_dock_app_on_item_scrolled),
                    widgets->button);
   gtk_widget_add_controller(widgets->button, scroll);
+
+  motion = gtk_event_controller_motion_new();
+  gtk_event_controller_set_propagation_phase(motion, GTK_PHASE_CAPTURE);
+  g_signal_connect(motion,
+                   "enter",
+                   G_CALLBACK(bs_dock_app_on_item_enter),
+                   widgets->slot);
+  g_signal_connect(motion,
+                   "motion",
+                   G_CALLBACK(bs_dock_app_on_item_motion),
+                   widgets->slot);
+  g_signal_connect(motion,
+                   "leave",
+                   G_CALLBACK(bs_dock_app_on_item_leave),
+                   widgets->slot);
+  gtk_widget_add_controller(widgets->slot, motion);
 
   gtk_box_append(GTK_BOX(widgets->slot), widgets->button);
   gtk_box_append(GTK_BOX(widgets->slot), widgets->indicator);
@@ -508,20 +761,10 @@ bs_dock_app_update_item_widgets(BsDockApp *app,
     }
   }
 
-  if (item->running) {
-    gtk_widget_add_css_class(widgets->button, "is-running");
-  } else {
-    gtk_widget_remove_css_class(widgets->button, "is-running");
-  }
   if (item->focused) {
-    gtk_widget_add_css_class(widgets->button, "is-focused");
+    gtk_widget_add_css_class(widgets->slot, "is-focused");
   } else {
-    gtk_widget_remove_css_class(widgets->button, "is-focused");
-  }
-  if (item->pinned && !item->running) {
-    gtk_widget_add_css_class(widgets->button, "is-pinned");
-  } else {
-    gtk_widget_remove_css_class(widgets->button, "is-pinned");
+    gtk_widget_remove_css_class(widgets->slot, "is-focused");
   }
 
   gtk_widget_set_size_request(widgets->indicator,
@@ -540,13 +783,108 @@ bs_dock_app_update_item_widgets(BsDockApp *app,
 }
 
 static void
+bs_dock_app_recompute_visual_indices(BsDockApp *app) {
+  g_return_if_fail(app != NULL);
+
+  for (guint i = 0; i < app->items->len; i++) {
+    const BsDockItemView *item = g_ptr_array_index(app->items, i);
+    BsDockItemWidgets *widgets = NULL;
+
+    if (item == NULL || item->app_key == NULL) {
+      continue;
+    }
+
+    widgets = g_hash_table_lookup(app->item_widgets_by_app_key, item->app_key);
+    if (widgets == NULL) {
+      continue;
+    }
+
+    widgets->visual_index = i;
+  }
+}
+
+static void
+bs_dock_app_refresh_magnification(BsDockApp *app) {
+  guint hovered_index = 0;
+  double t = 0.5;
+  double distance_from_center = 0.0;
+  double center_weight = 0.0;
+  double left1_weight = 0.0;
+  double right1_weight = 0.0;
+  double left2_weight = 0.0;
+  double right2_weight = 0.0;
+
+  g_return_if_fail(app != NULL);
+
+  for (guint i = 0; i < app->items->len; i++) {
+    const BsDockItemView *item = g_ptr_array_index(app->items, i);
+    BsDockItemWidgets *widgets = NULL;
+    double weight = 0.0;
+    guint target_bucket = 0;
+
+    if (item == NULL || item->app_key == NULL) {
+      continue;
+    }
+
+    widgets = g_hash_table_lookup(app->item_widgets_by_app_key, item->app_key);
+    if (widgets == NULL) {
+      continue;
+    }
+
+    gtk_widget_remove_css_class(widgets->slot, "is-hovered");
+
+    if (app->hover_active && app->hovered_widgets != NULL && app->items->len > 0) {
+      hovered_index = app->hovered_widgets->visual_index;
+      if (hovered_index >= app->items->len) {
+        bs_dock_app_reset_hover_state(app);
+        bs_dock_app_set_widget_mag_bucket(widgets, 0);
+        continue;
+      }
+
+      t = CLAMP(app->hover_x_ratio, 0.0, 1.0);
+      distance_from_center = t - 0.5;
+      if (distance_from_center < 0.0) {
+        distance_from_center = -distance_from_center;
+      }
+
+      center_weight = 0.84 + (0.16 * (1.0 - (distance_from_center * 2.0)));
+      left1_weight = 0.72 * (1.0 - t);
+      right1_weight = 0.72 * t;
+      left2_weight = 0.30 * (1.0 - t);
+      right2_weight = 0.30 * t;
+
+      if (i == hovered_index) {
+        weight = center_weight;
+        gtk_widget_add_css_class(widgets->slot, "is-hovered");
+      } else if (hovered_index > 0 && i + 1 == hovered_index) {
+        weight = left1_weight;
+      } else if (i == hovered_index + 1) {
+        weight = right1_weight;
+      } else if (hovered_index > 1 && i + 2 == hovered_index) {
+        weight = left2_weight;
+      } else if (i == hovered_index + 2) {
+        weight = right2_weight;
+      }
+    }
+
+    if (weight > 0.0) {
+      target_bucket = bs_dock_app_scale_to_mag_bucket(1.0 + (0.18 * weight));
+    }
+
+    bs_dock_app_set_widget_mag_bucket(widgets, target_bucket);
+  }
+}
+
+static void
 bs_dock_app_sync_ui(BsDockApp *app) {
   g_autoptr(GHashTable) seen_keys = NULL;
   GtkWidget *previous_slot = NULL;
+  guint previous_item_count = 0;
 
   g_return_if_fail(app != NULL);
   g_return_if_fail(app->items_box != NULL);
 
+  previous_item_count = g_hash_table_size(app->item_widgets_by_app_key);
   seen_keys = g_hash_table_new(g_str_hash, g_str_equal);
   for (guint i = 0; i < app->items->len; i++) {
     const BsDockItemView *item = g_ptr_array_index(app->items, i);
@@ -575,14 +913,22 @@ bs_dock_app_sync_ui(BsDockApp *app) {
   if (app->item_widgets_by_app_key != NULL) {
     GHashTableIter iter;
     gpointer key = NULL;
+    gpointer value = NULL;
 
     g_hash_table_iter_init(&iter, app->item_widgets_by_app_key);
-    while (g_hash_table_iter_next(&iter, &key, NULL)) {
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
       if (!g_hash_table_contains(seen_keys, key)) {
+        if (app->hovered_widgets == value) {
+          bs_dock_app_reset_hover_state(app);
+        }
         g_hash_table_iter_remove(&iter);
       }
     }
   }
+
+  bs_dock_app_recompute_visual_indices(app);
+  bs_dock_app_validate_hover_state(app, previous_item_count);
+  bs_dock_app_refresh_magnification(app);
 
   if (app->items->len == 0) {
     bs_dock_app_set_status(app, "Waiting for dock items");
@@ -998,6 +1344,7 @@ bs_dock_app_connect_ipc(BsDockApp *app, GError **error) {
 static void
 bs_dock_app_apply_css(void) {
   GtkCssProvider *provider = NULL;
+  /* Keep vertical lift on slot and magnification on button so state transforms compose cleanly. */
   const char *css =
     "window.bit-dock-window {"
     "  background: transparent;"
@@ -1006,16 +1353,38 @@ bs_dock_app_apply_css(void) {
     ".dock-root {"
     "  padding: 10px 14px 8px 14px;"
     "  border-radius: 24px;"
-    "  background: rgba(248, 248, 252, 0.82);"
-    "  border: 1px solid rgba(255, 255, 255, 0.22);"
-    "  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22),"
-    "              inset 0 1px 0 rgba(255, 255, 255, 0.18);"
+    "  background-color: rgba(242, 245, 250, 0.12);"
+    "  background-image: linear-gradient(to bottom,"
+    "                    rgba(255, 255, 255, 0.22) 0%,"
+    "                    rgba(248, 249, 252, 0.16) 38%,"
+    "                    rgba(236, 240, 247, 0.11) 100%);"
+    "  border: 1px solid rgba(255, 255, 255, 0.16);"
+    "  box-shadow:"
+    "    0 16px 36px rgba(0, 0, 0, 0.22),"
+    "    0 4px 10px rgba(0, 0, 0, 0.10),"
+    "    inset 0 1px 0 rgba(255, 255, 255, 0.34),"
+    "    inset 0 -1px 0 rgba(255, 255, 255, 0.08),"
+    "    inset 0 -10px 20px rgba(255, 255, 255, 0.03);"
+    "}"
+    ".dock-items {"
+    "  background: transparent;"
     "}"
     ".dock-slot {"
     "  margin-left: 1px;"
     "  margin-right: 1px;"
     "  padding-top: 4px;"
     "  padding-bottom: 6px;"
+    "  transform: translateY(0);"
+    "  transition: transform 170ms cubic-bezier(0.22, 0.90, 0.20, 1.00);"
+    "}"
+    ".dock-slot.is-hovered {"
+    "  transform: translateY(-4px);"
+    "}"
+    ".dock-slot.is-focused {"
+    "  transform: translateY(-2px);"
+    "}"
+    ".dock-slot.is-focused.is-hovered {"
+    "  transform: translateY(-5px);"
     "}"
     ".dock-item {"
     "  min-width: 56px;"
@@ -1025,37 +1394,27 @@ bs_dock_app_apply_css(void) {
     "  border: 1px solid transparent;"
     "  background: transparent;"
     "  box-shadow: none;"
+    "  transform-origin: 50% 100%;"
     "  transform: scale(1.0);"
-    "  transition: transform 140ms ease, background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;"
+    "  transition: transform 170ms cubic-bezier(0.22, 0.90, 0.20, 1.00);"
     "}"
-    ".dock-item:hover {"
-    "  background: rgba(255, 255, 255, 0.10);"
-    "  border: 1px solid rgba(255, 255, 255, 0.10);"
-    "  transform: scale(1.12);"
-    "}"
+    ".dock-item.mag-0 { transform: scale(1.00); }"
+    ".dock-item.mag-1 { transform: scale(1.02); }"
+    ".dock-item.mag-2 { transform: scale(1.04); }"
+    ".dock-item.mag-3 { transform: scale(1.06); }"
+    ".dock-item.mag-4 { transform: scale(1.08); }"
+    ".dock-item.mag-5 { transform: scale(1.10); }"
+    ".dock-item.mag-6 { transform: scale(1.12); }"
+    ".dock-item.mag-7 { transform: scale(1.14); }"
+    ".dock-item.mag-8 { transform: scale(1.16); }"
+    ".dock-item.mag-9 { transform: scale(1.18); }"
     ".dock-item-icon {"
     "  color: rgba(24, 28, 34, 0.94);"
-    "  transform: scale(1.0);"
-    "  transition: transform 140ms ease;"
-    "}"
-    ".dock-item:hover .dock-item-icon {"
-    "  transform: scale(1.06);"
     "}"
     ".dock-item-label {"
     "  color: rgba(24, 28, 34, 0.92);"
     "  font-size: 11px;"
     "  font-weight: 600;"
-    "}"
-    ".dock-item.is-running {"
-    "  background: transparent;"
-    "}"
-    ".dock-item.is-focused {"
-    "  background: rgba(255, 255, 255, 0.12);"
-    "  border: 1px solid rgba(255, 255, 255, 0.14);"
-    "  transform: translateY(-3px);"
-    "}"
-    ".dock-item.is-pinned {"
-    "  background: transparent;"
     "}"
     ".dock-indicator {"
     "  min-width: 6px;"
@@ -1124,6 +1483,7 @@ bs_dock_app_ensure_window(BsDockApp *app) {
   gtk_widget_add_css_class(app->root_box, "dock-root");
 
   app->items_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_widget_add_css_class(app->items_box, "dock-items");
   gtk_widget_set_halign(app->items_box, GTK_ALIGN_CENTER);
 
   app->status_label = gtk_label_new("Connecting to bit_shelld...");
