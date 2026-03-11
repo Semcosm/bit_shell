@@ -128,6 +128,7 @@ static double bs_dock_app_base_center_for_index(BsDockApp *app, guint index);
 static double bs_dock_app_hover_range(BsDockApp *app, guint item_count);
 static double bs_dock_app_magnification_weight(double distance_px, double radius_px);
 static double bs_dock_app_animation_alpha(double dt_seconds, double tau_seconds);
+static void bs_dock_app_solve_isotonic(double *values, const double *weights, guint len);
 static void bs_dock_app_update_targets(BsDockApp *app);
 static bool bs_dock_app_apply_current_visuals(BsDockApp *app, bool force_dynamic_css);
 static gboolean bs_dock_app_tick_cb(GtkWidget *widget, GdkFrameClock *frame_clock, gpointer user_data);
@@ -477,6 +478,61 @@ bs_dock_app_animation_alpha(double dt_seconds, double tau_seconds) {
   }
 
   return 1.0 - exp(-(dt_seconds / tau_seconds));
+}
+
+static void
+bs_dock_app_solve_isotonic(double *values, const double *weights, guint len) {
+  guint *block_starts = NULL;
+  guint *block_ends = NULL;
+  double *block_weight_sums = NULL;
+  double *block_value_sums = NULL;
+  guint block_count = 0;
+
+  g_return_if_fail(values != NULL);
+  g_return_if_fail(weights != NULL);
+
+  if (len == 0) {
+    return;
+  }
+
+  block_starts = g_newa(guint, len);
+  block_ends = g_newa(guint, len);
+  block_weight_sums = g_newa(double, len);
+  block_value_sums = g_newa(double, len);
+
+  for (guint i = 0; i < len; i++) {
+    double weight = MAX(weights[i], 0.0001);
+
+    block_starts[block_count] = i;
+    block_ends[block_count] = i;
+    block_weight_sums[block_count] = weight;
+    block_value_sums[block_count] = values[i] * weight;
+    block_count++;
+
+    while (block_count > 1) {
+      double previous_mean =
+        block_value_sums[block_count - 2] / block_weight_sums[block_count - 2];
+      double current_mean =
+        block_value_sums[block_count - 1] / block_weight_sums[block_count - 1];
+
+      if (previous_mean <= current_mean + 1e-12) {
+        break;
+      }
+
+      block_ends[block_count - 2] = block_ends[block_count - 1];
+      block_weight_sums[block_count - 2] += block_weight_sums[block_count - 1];
+      block_value_sums[block_count - 2] += block_value_sums[block_count - 1];
+      block_count--;
+    }
+  }
+
+  for (guint block_index = 0; block_index < block_count; block_index++) {
+    double mean = block_value_sums[block_index] / block_weight_sums[block_index];
+
+    for (guint i = block_starts[block_index]; i <= block_ends[block_index]; i++) {
+      values[i] = mean;
+    }
+  }
 }
 
 
@@ -924,7 +980,6 @@ bs_dock_app_update_targets(BsDockApp *app) {
   guint item_count = 0;
   double hover_range = 0.0;
   double base_gap = 0.0;
-  gint hovered_index = 0;
 
   g_return_if_fail(app != NULL);
   g_return_if_fail(app->ordered_item_widgets != NULL);
@@ -941,19 +996,19 @@ bs_dock_app_update_targets(BsDockApp *app) {
     double first_center = ((BsDockItemWidgets *) g_ptr_array_index(app->ordered_item_widgets, 0))->base_center_x;
     double last_center =
       ((BsDockItemWidgets *) g_ptr_array_index(app->ordered_item_widgets, item_count - 1))->base_center_x;
-    double step = bs_dock_app_base_step(app);
 
     app->pointer_x = CLAMP(app->pointer_x, first_center, last_center);
-    hovered_index = (gint) floor(((app->pointer_x - first_center) / step) + 0.5);
-    hovered_index = CLAMP(hovered_index, 0, (gint) item_count - 1);
   }
 
   {
     double *weights = g_newa(double, item_count);
     double *half_visual = g_newa(double, item_count);
+    double *minimum_distances = g_newa(double, item_count);
+    double *prefix_offsets = g_newa(double, item_count);
+    double *projected_centers = g_newa(double, item_count);
+    double *projection_weights = g_newa(double, item_count);
     double *target_centers = g_newa(double, item_count);
-    gint active_start = -1;
-    gint active_end = -1;
+    bool any_active = false;
 
     for (guint i = 0; i < item_count; i++) {
       BsDockItemWidgets *widgets = g_ptr_array_index(app->ordered_item_widgets, i);
@@ -972,10 +1027,7 @@ bs_dock_app_update_targets(BsDockApp *app) {
       }
 
       if (weight > BS_DOCK_ACTIVE_WEIGHT_EPSILON) {
-        if (active_start < 0) {
-          active_start = (gint) i;
-        }
-        active_end = (gint) i;
+        any_active = true;
       }
 
       target_scale = 1.0 + ((BS_DOCK_MAX_VISUAL_SCALE - 1.0) * weight);
@@ -989,60 +1041,34 @@ bs_dock_app_update_targets(BsDockApp *app) {
       half_visual[i] = (BS_DOCK_BASE_ITEM_SIZE * target_scale) * 0.5;
     }
 
-    if (app->hover_active && active_start >= 0) {
-      gint left_stop = active_start;
-      gint right_stop = active_end;
-
-      target_centers[hovered_index] =
-        ((BsDockItemWidgets *) g_ptr_array_index(app->ordered_item_widgets, hovered_index))->base_center_x;
-
-      for (gint i = hovered_index + 1; i < (gint) item_count; i++) {
-        double base_center =
-          ((BsDockItemWidgets *) g_ptr_array_index(app->ordered_item_widgets, i))->base_center_x;
-        double min_center = target_centers[i - 1] + half_visual[i - 1] + base_gap + half_visual[i];
-        double solved_center = MAX(base_center, min_center);
-
-        target_centers[i] = solved_center;
-        if (fabs(solved_center - base_center) > BS_DOCK_LAYOUT_EPSILON || i <= active_end + 1) {
-          right_stop = i;
-          continue;
-        }
-
-        break;
-      }
-
-      for (gint i = hovered_index - 1; i >= 0; i--) {
-        double base_center =
-          ((BsDockItemWidgets *) g_ptr_array_index(app->ordered_item_widgets, i))->base_center_x;
-        double max_center = target_centers[i + 1] - half_visual[i + 1] - base_gap - half_visual[i];
-        double solved_center = MIN(base_center, max_center);
-
-        target_centers[i] = solved_center;
-        if (fabs(solved_center - base_center) > BS_DOCK_LAYOUT_EPSILON || i >= active_start - 1) {
-          left_stop = i;
-          continue;
-        }
-
-        break;
-      }
-
-      for (guint i = 0; i < item_count; i++) {
-        BsDockItemWidgets *widgets = g_ptr_array_index(app->ordered_item_widgets, i);
-
-        if ((gint) i < left_stop || (gint) i > right_stop) {
-          widgets->target_offset_x_px = 0.0;
-          continue;
-        }
-
-        widgets->target_offset_x_px = target_centers[i] - widgets->base_center_x;
-      }
+    if (!app->hover_active || !any_active) {
       return;
     }
+
+    prefix_offsets[0] = 0.0;
+    projected_centers[0] =
+      ((BsDockItemWidgets *) g_ptr_array_index(app->ordered_item_widgets, 0))->base_center_x;
+    projection_weights[0] = 1.0 + ((1.0 - weights[0]) * 6.0);
+
+    for (guint i = 1; i < item_count; i++) {
+      minimum_distances[i - 1] = half_visual[i - 1] + base_gap + half_visual[i];
+      prefix_offsets[i] = prefix_offsets[i - 1] + minimum_distances[i - 1];
+      projected_centers[i] =
+        ((BsDockItemWidgets *) g_ptr_array_index(app->ordered_item_widgets, i))->base_center_x
+        - prefix_offsets[i];
+      projection_weights[i] = 1.0 + ((1.0 - weights[i]) * 6.0);
+    }
+
+    bs_dock_app_solve_isotonic(projected_centers, projection_weights, item_count);
 
     for (guint i = 0; i < item_count; i++) {
       BsDockItemWidgets *widgets = g_ptr_array_index(app->ordered_item_widgets, i);
 
-      widgets->target_offset_x_px = 0.0;
+      target_centers[i] = projected_centers[i] + prefix_offsets[i];
+      widgets->target_offset_x_px = target_centers[i] - widgets->base_center_x;
+      if (fabs(widgets->target_offset_x_px) <= BS_DOCK_LAYOUT_EPSILON) {
+        widgets->target_offset_x_px = 0.0;
+      }
     }
   }
 }
