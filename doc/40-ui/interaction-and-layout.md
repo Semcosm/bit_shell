@@ -13,6 +13,8 @@
 ## dock 交互约束
 
 - magnification 优先保证稳定性，不以整排连续函数为前提
+- dock hover 命中应以整排容器为单位计算，而不是依赖单个 child 的 enter/leave
+- 图标之间的 spacing 不应形成 dead zone；推荐使用扩展命中带或最近中心兜底
 - hover 位移与 magnification scale 应分层表达，避免 focused/hovered/active 互相覆盖 transform
 - 推荐将纵向位移放在 item 外层容器，将 scale 放在图标按钮本体
 - dock 数据刷新后应重新校验 hover 关联，避免指向已删除或已替换 item 的悬空状态

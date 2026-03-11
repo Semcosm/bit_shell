@@ -73,7 +73,8 @@
 
 - hover magnification 只影响当前 item 与左右各 2 个邻居，不做整排连续函数
 - magnification 由鼠标在当前 item 内的横向位置插值驱动
-- motion 事件挂在 item 外层 slot，而不是按钮本体，以降低放大后边界抖动
+- motion 事件挂在整排 `items_box` 上，而不是每个 item 上
+- hover 命中按整排坐标计算：图标左右各吃半个 spacing，并对 gap 区域做最近中心兜底，避免 dead zone
 - hover leave 采用短延迟清理，避免相邻 item 切换时出现 enter/leave 抖动
 - dock 数据刷新后会重新校验 hover 关联；若 hovered item 被删除、替换或顺序失效，则立即清空 hover 状态
 
