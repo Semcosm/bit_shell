@@ -18,7 +18,7 @@
 - 右键：应用动作菜单
 - 滚轮：切换同 app 窗口
 - 拖拽：重排 pinned
-- hover：当前 item 与左右各 2 个邻居做递减 magnification
+- hover：按整排连续指针场驱动 magnification、局部横向让位和竖向抬升
 
 ## 激活规则
 
@@ -71,25 +71,32 @@
 
 当前 `bit_dock` GTK 前端已落地以下交互语义：
 
-- hover magnification 只影响当前 item 与左右各 2 个邻居，不做整排连续函数
-- magnification 由鼠标在当前 item 内的横向位置插值驱动
 - motion 事件挂在整排 `items_box` 上，而不是每个 item 上
-- hover 命中按整排坐标计算：图标左右各吃半个 spacing，并对 gap 区域做最近中心兜底，避免 dead zone
-- hover leave 采用短延迟清理，避免相邻 item 切换时出现 enter/leave 抖动
-- dock 数据刷新后会重新校验 hover 关联；若 hovered item 被删除、替换或顺序失效，则立即清空 hover 状态
+- hover 输入状态以连续 `pointer_x / pointer_y` 表达，不再以单个 hovered item 作为主状态
+- magnification 采用有限支撑的连续权重函数；权重按鼠标到每个图标基础中心的横向距离连续计算
+- 图标 scale、lift 和 offset 先算 `target`，再由 tick 回调按时间常数插值到 `current`
+- 横向让位不再依赖固定邻居权重，而是按最小中心距约束做局部连续求解
+- hover 求解使用稳定参考坐标系；输入指针和 `base_center_x` 都定义在 `layout_box` 坐标系下，避免动态 margin 反馈抖动
+- dock 宽度会吸收左右视觉外溢；顶部采用透明 headroom 吸收放大与抬升，但不改变白色玻璃框自身高度
+- dock 数据刷新后会重建基础几何与视觉顺序，并保持后续动画基于新的基础中心继续插值
 
 ## 当前视觉分层
 
 当前实现将位移与缩放拆到两层：
 
-- `dock-slot`：负责纵向抬升
+- `dock-slot`：负责横向位移
+- `dock-slot-content`：负责纵向抬升
 - `dock-item`：负责 magnification scale
 - `dock-indicator`：只表达 running/focused 指示，不参与 scale 决策
 
-状态叠加规则当前固定为：
+当前状态不再通过离散 bucket class 叠加，而是连续输出到动态样式：
 
-- 普通：`translateY(0)`
-- focused：`translateY(-2px)`
-- hovered：`translateY(-4px)`
-- focused + hovered：`translateY(-5px)`
-- magnification：仅通过 `dock-item.mag-*` 控制 `scale`
+- `dock-slot`：`translateX(current_offset_x)`
+- `dock-slot-content`：`translateY(-current_lift)`
+- `dock-item`：`scale(current_scale)`
+
+当前动画模型：
+
+- `scale`、`lift`、`offset` 都保留 `current_*` 与 `target_*`
+- 每帧通过 GTK tick 回调做时间常数插值，而不是通过固定 `mag-*` bucket 切换
+- 目标布局使用一维约束投影求解，避免鼠标位于两个图标中缝时出现离散锚点切换抖动
