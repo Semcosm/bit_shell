@@ -35,6 +35,6 @@ executable(
   'bit_dock',
   bit_dock_sources,
   include_directories: core_includes,
-  dependencies: [glib_dep, gio_dep, gio_unix_dep, json_glib_dep, gtk4_dep, gtk4_layer_shell_dep],
+  dependencies: [glib_dep, gio_dep, gio_unix_dep, json_glib_dep, gtk4_dep, gtk4_layer_shell_dep, math_dep],
   install: false,
 )
