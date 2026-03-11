@@ -3,6 +3,7 @@
 #include <gio/gio.h>
 #include <glib.h>
 #include <json-glib/json-glib.h>
+#include <math.h>
 #include <gtk4-layer-shell.h>
 
 #define BS_DOCK_APP_ID "io.bit_shell.bit_dock"
@@ -37,7 +38,6 @@ typedef struct {
   GtkWidget *indicator;
   GtkWidget *icon_image;
   GtkWidget *label;
-  GtkEventController *motion;
   BsDockItemActionData *action;
   guint visual_index;
   guint mag_bucket;
@@ -49,6 +49,7 @@ struct _BsDockApp {
   GtkWidget *root_box;
   GtkWidget *items_box;
   GtkWidget *status_label;
+  GtkEventController *items_motion;
   GSocketClient *socket_client;
   GSocketConnection *connection;
   GDataInputStream *input;
@@ -79,6 +80,10 @@ static void bs_dock_app_update_item_widgets(BsDockApp *app,
 static void bs_dock_app_sync_ui(BsDockApp *app);
 static void bs_dock_app_recompute_visual_indices(BsDockApp *app);
 static void bs_dock_app_refresh_magnification(BsDockApp *app);
+static void bs_dock_app_set_hover_target(BsDockApp *app,
+                                         BsDockItemWidgets *widgets,
+                                         double hover_x_ratio);
+static void bs_dock_app_update_hover_from_items_box(BsDockApp *app, double x, double y);
 static void bs_dock_app_reset_hover_state(BsDockApp *app);
 static void bs_dock_app_validate_hover_state(BsDockApp *app, guint previous_item_count);
 static void bs_dock_app_cancel_hover_clear(BsDockApp *app);
@@ -111,16 +116,16 @@ static void bs_dock_app_on_item_secondary_pressed(GtkGestureClick *gesture,
                                                   gdouble x,
                                                   gdouble y,
                                                   gpointer user_data);
-static void bs_dock_app_on_item_enter(GtkEventControllerMotion *motion,
-                                      gdouble x,
-                                      gdouble y,
-                                      gpointer user_data);
-static void bs_dock_app_on_item_motion(GtkEventControllerMotion *motion,
+static void bs_dock_app_on_items_enter(GtkEventControllerMotion *motion,
                                        gdouble x,
                                        gdouble y,
                                        gpointer user_data);
-static void bs_dock_app_on_item_leave(GtkEventControllerMotion *motion,
-                                      gpointer user_data);
+static void bs_dock_app_on_items_motion(GtkEventControllerMotion *motion,
+                                        gdouble x,
+                                        gdouble y,
+                                        gpointer user_data);
+static void bs_dock_app_on_items_leave(GtkEventControllerMotion *motion,
+                                       gpointer user_data);
 static gboolean bs_dock_app_on_item_scrolled(GtkEventControllerScroll *controller,
                                              gdouble dx,
                                              gdouble dy,
@@ -338,34 +343,105 @@ bs_dock_app_schedule_hover_clear(BsDockApp *app) {
 }
 
 static void
-bs_dock_app_set_hover_from_pointer(BsDockApp *app,
-                                   BsDockItemWidgets *widgets,
-                                   GtkWidget *event_widget,
-                                   gdouble x) {
-  int width = 0;
-  bool hover_target_changed = false;
-
+bs_dock_app_set_hover_target(BsDockApp *app,
+                             BsDockItemWidgets *widgets,
+                             double hover_x_ratio) {
   g_return_if_fail(app != NULL);
 
   bs_dock_app_cancel_hover_clear(app);
 
-  width = event_widget != NULL ? gtk_widget_get_width(event_widget) : 0;
-  if (width <= 0) {
-    app->hover_x_ratio = 0.5;
+  app->hover_active = (widgets != NULL);
+  app->hovered_widgets = widgets;
+  app->hover_x_ratio = CLAMP(hover_x_ratio, 0.0, 1.0);
+
+  if (widgets != NULL && widgets->action != NULL && widgets->action->app_key != NULL) {
+    if (app->hovered_app_key == NULL
+        || g_strcmp0(app->hovered_app_key, widgets->action->app_key) != 0) {
+      g_free(app->hovered_app_key);
+      app->hovered_app_key = g_strdup(widgets->action->app_key);
+    }
   } else {
-    app->hover_x_ratio = CLAMP(x / (double) width, 0.0, 1.0);
+    g_clear_pointer(&app->hovered_app_key, g_free);
   }
 
-  hover_target_changed = (app->hovered_widgets != widgets);
-  app->hover_active = widgets != NULL;
-  app->hovered_widgets = widgets;
-  if (hover_target_changed) {
-    g_free(app->hovered_app_key);
-    app->hovered_app_key = (widgets != NULL && widgets->action != NULL && widgets->action->app_key != NULL)
-                             ? g_strdup(widgets->action->app_key)
-                             : NULL;
-  }
   bs_dock_app_refresh_magnification(app);
+}
+
+static void
+bs_dock_app_update_hover_from_items_box(BsDockApp *app, double x, double y) {
+  BsDockItemWidgets *best_widgets = NULL;
+  double best_ratio = 0.5;
+  double best_distance = G_MAXDOUBLE;
+  int spacing = 0;
+
+  g_return_if_fail(app != NULL);
+  g_return_if_fail(app->items_box != NULL);
+
+  (void) y;
+  spacing = gtk_box_get_spacing(GTK_BOX(app->items_box));
+
+  for (guint i = 0; i < app->items->len; i++) {
+    const BsDockItemView *item = g_ptr_array_index(app->items, i);
+    BsDockItemWidgets *widgets = NULL;
+    graphene_point_t p0 = GRAPHENE_POINT_INIT(0.0f, 0.0f);
+    graphene_point_t p1;
+    graphene_point_t q0;
+    graphene_point_t q1;
+    double left = 0.0;
+    double right = 0.0;
+    double width = 0.0;
+    double center = 0.0;
+    double band_left = 0.0;
+    double band_right = 0.0;
+    double ratio = 0.5;
+    double distance = 0.0;
+
+    if (item == NULL || item->app_key == NULL) {
+      continue;
+    }
+
+    widgets = g_hash_table_lookup(app->item_widgets_by_app_key, item->app_key);
+    if (widgets == NULL || widgets->slot == NULL) {
+      continue;
+    }
+
+    if (!gtk_widget_get_mapped(widgets->slot)) {
+      continue;
+    }
+
+    p1 = GRAPHENE_POINT_INIT((float) gtk_widget_get_width(widgets->slot), 0.0f);
+    if (!gtk_widget_compute_point(widgets->slot, app->items_box, &p0, &q0)
+        || !gtk_widget_compute_point(widgets->slot, app->items_box, &p1, &q1)) {
+      continue;
+    }
+
+    left = q0.x;
+    right = q1.x;
+    width = MAX(right - left, 1.0);
+    center = left + (width * 0.5);
+    band_left = left - (spacing * 0.5);
+    band_right = right + (spacing * 0.5);
+    ratio = CLAMP((x - left) / width, 0.0, 1.0);
+
+    if (x >= band_left && x <= band_right) {
+      distance = fabs(x - center);
+      if (distance < best_distance) {
+        best_distance = distance;
+        best_widgets = widgets;
+        best_ratio = ratio;
+      }
+      continue;
+    }
+
+    distance = fabs(x - center);
+    if (distance < best_distance) {
+      best_distance = distance;
+      best_widgets = widgets;
+      best_ratio = ratio;
+    }
+  }
+
+  bs_dock_app_set_hover_target(app, best_widgets, best_ratio);
 }
 
 static void
@@ -542,64 +618,37 @@ bs_dock_app_on_item_secondary_pressed(GtkGestureClick *gesture,
 }
 
 static void
-bs_dock_app_on_item_enter(GtkEventControllerMotion *motion,
-                          gdouble x,
-                          gdouble y,
-                          gpointer user_data) {
-  GtkWidget *slot = user_data;
-  BsDockApp *app = NULL;
-  BsDockItemWidgets *widgets = NULL;
-
-  (void) motion;
-  (void) y;
-
-  g_return_if_fail(slot != NULL);
-
-  app = g_object_get_data(G_OBJECT(slot), "bs-dock-app");
-  widgets = g_object_get_data(G_OBJECT(slot), "bs-dock-widgets");
-  if (app == NULL || widgets == NULL) {
-    return;
-  }
-
-  bs_dock_app_set_hover_from_pointer(app, widgets, slot, x);
-}
-
-static void
-bs_dock_app_on_item_motion(GtkEventControllerMotion *motion,
+bs_dock_app_on_items_enter(GtkEventControllerMotion *motion,
                            gdouble x,
                            gdouble y,
                            gpointer user_data) {
-  GtkWidget *slot = user_data;
-  BsDockApp *app = NULL;
-  BsDockItemWidgets *widgets = NULL;
+  BsDockApp *app = user_data;
 
   (void) motion;
-  (void) y;
+  g_return_if_fail(app != NULL);
 
-  g_return_if_fail(slot != NULL);
-
-  app = g_object_get_data(G_OBJECT(slot), "bs-dock-app");
-  widgets = g_object_get_data(G_OBJECT(slot), "bs-dock-widgets");
-  if (app == NULL || widgets == NULL) {
-    return;
-  }
-
-  bs_dock_app_set_hover_from_pointer(app, widgets, slot, x);
+  bs_dock_app_update_hover_from_items_box(app, x, y);
 }
 
 static void
-bs_dock_app_on_item_leave(GtkEventControllerMotion *motion, gpointer user_data) {
-  GtkWidget *slot = user_data;
-  BsDockApp *app = NULL;
+bs_dock_app_on_items_motion(GtkEventControllerMotion *motion,
+                            gdouble x,
+                            gdouble y,
+                            gpointer user_data) {
+  BsDockApp *app = user_data;
 
   (void) motion;
+  g_return_if_fail(app != NULL);
 
-  g_return_if_fail(slot != NULL);
+  bs_dock_app_update_hover_from_items_box(app, x, y);
+}
 
-  app = g_object_get_data(G_OBJECT(slot), "bs-dock-app");
-  if (app == NULL) {
-    return;
-  }
+static void
+bs_dock_app_on_items_leave(GtkEventControllerMotion *motion, gpointer user_data) {
+  BsDockApp *app = user_data;
+
+  (void) motion;
+  g_return_if_fail(app != NULL);
 
   app->hover_active = false;
   bs_dock_app_schedule_hover_clear(app);
@@ -655,7 +704,6 @@ bs_dock_app_create_item_widgets(BsDockApp *app, const BsDockItemView *item) {
   GtkGesture *primary_click = NULL;
   GtkGesture *secondary_click = NULL;
   GtkEventController *scroll = NULL;
-  GtkEventController *motion = NULL;
 
   g_return_val_if_fail(app != NULL, NULL);
   g_return_val_if_fail(item != NULL, NULL);
@@ -690,9 +738,6 @@ bs_dock_app_create_item_widgets(BsDockApp *app, const BsDockItemView *item) {
   widgets->mag_bucket = G_MAXUINT;
   g_object_set_data(G_OBJECT(widgets->button), "bs-dock-app", app);
   g_object_set_data(G_OBJECT(widgets->button), "bs-dock-action", widgets->action);
-  g_object_set_data(G_OBJECT(widgets->button), "bs-dock-widgets", widgets);
-  g_object_set_data(G_OBJECT(widgets->slot), "bs-dock-app", app);
-  g_object_set_data(G_OBJECT(widgets->slot), "bs-dock-widgets", widgets);
 
   primary_click = gtk_gesture_click_new();
   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(primary_click), GDK_BUTTON_PRIMARY);
@@ -717,23 +762,6 @@ bs_dock_app_create_item_widgets(BsDockApp *app, const BsDockItemView *item) {
                    G_CALLBACK(bs_dock_app_on_item_scrolled),
                    widgets->button);
   gtk_widget_add_controller(widgets->button, scroll);
-
-  motion = gtk_event_controller_motion_new();
-  widgets->motion = motion;
-  gtk_event_controller_set_propagation_phase(motion, GTK_PHASE_CAPTURE);
-  g_signal_connect(motion,
-                   "enter",
-                   G_CALLBACK(bs_dock_app_on_item_enter),
-                   widgets->slot);
-  g_signal_connect(motion,
-                   "motion",
-                   G_CALLBACK(bs_dock_app_on_item_motion),
-                   widgets->slot);
-  g_signal_connect(motion,
-                   "leave",
-                   G_CALLBACK(bs_dock_app_on_item_leave),
-                   widgets->slot);
-  gtk_widget_add_controller(widgets->slot, motion);
 
   gtk_box_append(GTK_BOX(widgets->slot), widgets->button);
   gtk_box_append(GTK_BOX(widgets->slot), widgets->indicator);
@@ -1493,6 +1521,21 @@ bs_dock_app_ensure_window(BsDockApp *app) {
   app->items_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
   gtk_widget_add_css_class(app->items_box, "dock-items");
   gtk_widget_set_halign(app->items_box, GTK_ALIGN_CENTER);
+  app->items_motion = gtk_event_controller_motion_new();
+  gtk_event_controller_set_propagation_phase(app->items_motion, GTK_PHASE_CAPTURE);
+  g_signal_connect(app->items_motion,
+                   "enter",
+                   G_CALLBACK(bs_dock_app_on_items_enter),
+                   app);
+  g_signal_connect(app->items_motion,
+                   "motion",
+                   G_CALLBACK(bs_dock_app_on_items_motion),
+                   app);
+  g_signal_connect(app->items_motion,
+                   "leave",
+                   G_CALLBACK(bs_dock_app_on_items_leave),
+                   app);
+  gtk_widget_add_controller(app->items_box, app->items_motion);
 
   app->status_label = gtk_label_new("Connecting to bit_shelld...");
   gtk_widget_add_css_class(app->status_label, "dock-status");
