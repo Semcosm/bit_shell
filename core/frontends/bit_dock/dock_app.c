@@ -37,6 +37,7 @@ typedef struct {
   GtkWidget *indicator;
   GtkWidget *icon_image;
   GtkWidget *label;
+  GtkEventController *motion;
   BsDockItemActionData *action;
   guint visual_index;
   guint mag_bucket;
@@ -342,6 +343,7 @@ bs_dock_app_set_hover_from_pointer(BsDockApp *app,
                                    GtkWidget *event_widget,
                                    gdouble x) {
   int width = 0;
+  bool hover_target_changed = false;
 
   g_return_if_fail(app != NULL);
 
@@ -354,12 +356,15 @@ bs_dock_app_set_hover_from_pointer(BsDockApp *app,
     app->hover_x_ratio = CLAMP(x / (double) width, 0.0, 1.0);
   }
 
+  hover_target_changed = (app->hovered_widgets != widgets);
   app->hover_active = widgets != NULL;
   app->hovered_widgets = widgets;
-  g_free(app->hovered_app_key);
-  app->hovered_app_key = (widgets != NULL && widgets->action != NULL && widgets->action->app_key != NULL)
-                           ? g_strdup(widgets->action->app_key)
-                           : NULL;
+  if (hover_target_changed) {
+    g_free(app->hovered_app_key);
+    app->hovered_app_key = (widgets != NULL && widgets->action != NULL && widgets->action->app_key != NULL)
+                             ? g_strdup(widgets->action->app_key)
+                             : NULL;
+  }
   bs_dock_app_refresh_magnification(app);
 }
 
@@ -596,7 +601,7 @@ bs_dock_app_on_item_leave(GtkEventControllerMotion *motion, gpointer user_data) 
     return;
   }
 
-  bs_dock_app_reset_hover_state(app);
+  app->hover_active = false;
   bs_dock_app_schedule_hover_clear(app);
 }
 
@@ -714,6 +719,7 @@ bs_dock_app_create_item_widgets(BsDockApp *app, const BsDockItemView *item) {
   gtk_widget_add_controller(widgets->button, scroll);
 
   motion = gtk_event_controller_motion_new();
+  widgets->motion = motion;
   gtk_event_controller_set_propagation_phase(motion, GTK_PHASE_CAPTURE);
   g_signal_connect(motion,
                    "enter",
@@ -813,8 +819,29 @@ bs_dock_app_refresh_magnification(BsDockApp *app) {
   double right1_weight = 0.0;
   double left2_weight = 0.0;
   double right2_weight = 0.0;
+  bool hover_ready = false;
 
   g_return_if_fail(app != NULL);
+
+  if (app->hovered_widgets != NULL && app->items->len > 0) {
+    hovered_index = app->hovered_widgets->visual_index;
+    if (hovered_index >= app->items->len) {
+      bs_dock_app_reset_hover_state(app);
+    } else {
+      t = CLAMP(app->hover_x_ratio, 0.0, 1.0);
+      distance_from_center = t - 0.5;
+      if (distance_from_center < 0.0) {
+        distance_from_center = -distance_from_center;
+      }
+
+      center_weight = 0.84 + (0.16 * (1.0 - (distance_from_center * 2.0)));
+      left1_weight = 0.72 * (1.0 - t);
+      right1_weight = 0.72 * t;
+      left2_weight = 0.30 * (1.0 - t);
+      right2_weight = 0.30 * t;
+      hover_ready = true;
+    }
+  }
 
   for (guint i = 0; i < app->items->len; i++) {
     const BsDockItemView *item = g_ptr_array_index(app->items, i);
@@ -833,26 +860,7 @@ bs_dock_app_refresh_magnification(BsDockApp *app) {
 
     gtk_widget_remove_css_class(widgets->slot, "is-hovered");
 
-    if (app->hover_active && app->hovered_widgets != NULL && app->items->len > 0) {
-      hovered_index = app->hovered_widgets->visual_index;
-      if (hovered_index >= app->items->len) {
-        bs_dock_app_reset_hover_state(app);
-        bs_dock_app_set_widget_mag_bucket(widgets, 0);
-        continue;
-      }
-
-      t = CLAMP(app->hover_x_ratio, 0.0, 1.0);
-      distance_from_center = t - 0.5;
-      if (distance_from_center < 0.0) {
-        distance_from_center = -distance_from_center;
-      }
-
-      center_weight = 0.84 + (0.16 * (1.0 - (distance_from_center * 2.0)));
-      left1_weight = 0.72 * (1.0 - t);
-      right1_weight = 0.72 * t;
-      left2_weight = 0.30 * (1.0 - t);
-      right2_weight = 0.30 * t;
-
+    if (hover_ready) {
       if (i == hovered_index) {
         weight = center_weight;
         gtk_widget_add_css_class(widgets->slot, "is-hovered");
