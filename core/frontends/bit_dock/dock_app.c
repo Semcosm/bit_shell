@@ -1577,7 +1577,10 @@ bs_dock_app_apply_settings_payload(BsDockApp *app, JsonObject *payload) {
   if (json_object_has_member(dock, "magnification_scale")) {
     config.magnification_scale = json_object_get_double_member(dock, "magnification_scale");
   }
-  config.hover_range_max = (uint32_t) bs_json_int_member(dock, "hover_range_max", config.hover_range_max);
+  config.hover_range_cap_units =
+    (uint32_t) bs_json_int_member(dock,
+                                  "hover_range_cap_units",
+                                  config.hover_range_cap_units);
   config.spacing_px = (uint32_t) bs_json_int_member(dock, "spacing_px", config.spacing_px);
   config.bottom_margin_px = (uint32_t) bs_json_int_member(dock, "bottom_margin_px", config.bottom_margin_px);
   config.show_running_indicator = bs_json_bool_member(dock,

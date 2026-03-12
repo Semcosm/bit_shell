@@ -24,7 +24,7 @@ typedef struct {
   int item_border_radius_px;
   int indicator_size_px;
   int focused_indicator_size_px;
-  int hover_range_max_units;
+  int hover_range_cap_units;
   double max_visual_scale;
   double max_hover_lift_px;
   double focused_lift_px;

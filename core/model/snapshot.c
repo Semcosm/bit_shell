@@ -375,11 +375,11 @@ bs_json_append_settings_payload(GString *json, const BsSnapshot *snapshot) {
   g_string_append(json, "{\"config_loaded\":true,\"pinned_apps\":");
   bs_json_append_string_array(json, snapshot->pinned_app_ids);
   g_string_append_printf(json,
-                         ",\"dock\":{\"icon_size_px\":%u,\"magnification_enabled\":%s,\"magnification_scale\":%.3f,\"hover_range_max\":%u,\"spacing_px\":%u,\"bottom_margin_px\":%u,\"show_running_indicator\":%s,\"animate_opening_apps\":%s,\"display_mode\":\"%s\",\"center_on_primary_output\":%s}}",
+                         ",\"dock\":{\"icon_size_px\":%u,\"magnification_enabled\":%s,\"magnification_scale\":%.3f,\"hover_range_cap_units\":%u,\"spacing_px\":%u,\"bottom_margin_px\":%u,\"show_running_indicator\":%s,\"animate_opening_apps\":%s,\"display_mode\":\"%s\",\"center_on_primary_output\":%s}}",
                          snapshot->dock_config.icon_size_px,
                          snapshot->dock_config.magnification_enabled ? "true" : "false",
                          snapshot->dock_config.magnification_scale,
-                         snapshot->dock_config.hover_range_max,
+                         snapshot->dock_config.hover_range_cap_units,
                          snapshot->dock_config.spacing_px,
                          snapshot->dock_config.bottom_margin_px,
                          snapshot->dock_config.show_running_indicator ? "true" : "false",

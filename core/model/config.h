@@ -30,7 +30,7 @@ typedef struct {
   uint32_t icon_size_px;
   bool magnification_enabled;
   double magnification_scale;
-  uint32_t hover_range_max;
+  uint32_t hover_range_cap_units;
   uint32_t spacing_px;
   uint32_t bottom_margin_px;
   bool show_running_indicator;

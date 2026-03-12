@@ -30,7 +30,7 @@ bs_dock_metrics_init_defaults(BsDockMetrics *metrics) {
   metrics->item_border_radius_px = 16;
   metrics->indicator_size_px = 6;
   metrics->focused_indicator_size_px = 7;
-  metrics->hover_range_max_units = 4;
+  metrics->hover_range_cap_units = 4;
   metrics->max_visual_scale = 1.80;
   metrics->max_hover_lift_px = 12.0;
   metrics->focused_lift_px = 2.0;
@@ -78,9 +78,9 @@ bs_dock_metrics_derive(BsDockMetrics *metrics, const BsDockConfig *config) {
   metrics->item_border_radius_px = MAX(12, bs_round_to_int((double) metrics->item_size_px * 0.29));
   metrics->indicator_size_px = MAX(4, bs_round_to_int((double) metrics->item_size_px * 0.11));
   metrics->focused_indicator_size_px = metrics->indicator_size_px + 1;
-  metrics->hover_range_max_units = (int) CLAMP(config->hover_range_max > 0
-                                                 ? config->hover_range_max
-                                                 : defaults.hover_range_max,
+  metrics->hover_range_cap_units = (int) CLAMP(config->hover_range_cap_units > 0
+                                                 ? config->hover_range_cap_units
+                                                 : defaults.hover_range_cap_units,
                                                2,
                                                12);
   metrics->max_visual_scale = config->magnification_enabled
@@ -121,7 +121,7 @@ bs_dock_metrics_hover_range(const BsDockMetrics *metrics, guint item_count) {
   preferred = (metrics->hover_range_base_factor * step)
               + (metrics->hover_range_span_factor * dock_span);
   min_range = metrics->hover_range_min_factor * step;
-  max_range = (double) metrics->hover_range_max_units * step;
+  max_range = (double) metrics->hover_range_cap_units * step;
   return CLAMP(preferred, min_range, max_range);
 }
 
