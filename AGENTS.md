@@ -7,6 +7,9 @@
 - `core/services/`: service-level logic (dock, launcher, tray, workspace, settings)
 - `core/state/`: state store and topic change tracking
 - `core/niri/`: niri integration backend
+- `scripts/`: repository-local helper scripts for development, diagnostics, and maintenance
+  - `scripts/startup/`: startup scripts and wrappers for running `bit_shell`
+  - `scripts/devtools/`: development-time testing, diagnostics, and analysis scripts
 
 Design and architecture docs are in `doc/` (overview, components, runtime, ADRs). Build artifacts are generated under `build/` and should not be manually edited.
 
