@@ -823,10 +823,11 @@ bs_dock_app_update_dynamic_css(BsDockApp *app) {
     g_string_append_printf(css,
                            "#%s { transform: translateY(%.2fpx); }\n",
                            widgets->content_css_name,
-                           translate_y);
+                           0.0);
     g_string_append_printf(css,
-                           "#%s { transform: scale(%.4f); }\n",
+                           "#%s { transform: translateY(%.2fpx) scale(%.4f); }\n",
                            widgets->button_css_name,
+                           translate_y,
                            scale);
   }
 

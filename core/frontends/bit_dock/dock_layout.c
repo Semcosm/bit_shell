@@ -19,17 +19,18 @@ bs_dock_metrics_init_defaults(BsDockMetrics *metrics) {
   metrics->items_spacing_px = 8;
   metrics->edge_reserve_px = 8;
   metrics->bottom_margin_px = 14;
-  metrics->root_pad_top_px = 10;
-  metrics->root_pad_bottom_px = 8;
+  metrics->root_pad_top_px = 6;
+  metrics->root_pad_bottom_px = 5;
   metrics->root_pad_side_px = 14;
   metrics->root_border_radius_px = 24;
   metrics->slot_side_margin_px = 1;
-  metrics->content_pad_top_px = 4;
-  metrics->content_pad_bottom_px = 6;
-  metrics->content_gap_px = 6;
+  metrics->content_pad_top_px = 3;
+  metrics->content_pad_bottom_px = 4;
+  metrics->content_gap_px = 5;
   metrics->item_border_radius_px = 16;
-  metrics->indicator_size_px = 6;
-  metrics->focused_indicator_size_px = 7;
+  metrics->indicator_size_px = 5;
+  metrics->focused_indicator_size_px = 6;
+  metrics->indicator_offset_y_px = 2;
   metrics->hover_range_cap_units = 4;
   metrics->max_visual_scale = 1.80;
   metrics->max_hover_lift_px = 12.0;
@@ -56,17 +57,19 @@ bs_dock_metrics_derive(BsDockMetrics *metrics, const BsDockConfig *config) {
                                 : MAX(0, bs_round_to_int((double) metrics->item_size_px * 0.14));
   metrics->edge_reserve_px = MAX(8, metrics->items_spacing_px);
   metrics->bottom_margin_px = (int) config->bottom_margin_px;
-  metrics->root_pad_top_px = MAX(6, bs_round_to_int((double) metrics->item_size_px * 0.18));
-  metrics->root_pad_bottom_px = MAX(6, bs_round_to_int((double) metrics->item_size_px * 0.14));
+  metrics->root_pad_top_px = MAX(5, bs_round_to_int((double) metrics->item_size_px * 0.11));
+  metrics->root_pad_bottom_px = MAX(5, bs_round_to_int((double) metrics->item_size_px * 0.09));
   metrics->root_pad_side_px = MAX(10, bs_round_to_int((double) metrics->item_size_px * 0.25));
   metrics->root_border_radius_px = MAX(18, bs_round_to_int((double) metrics->item_size_px * 0.43));
   metrics->slot_side_margin_px = MAX(1, bs_round_to_int((double) metrics->item_size_px * 0.02));
-  metrics->content_pad_top_px = MAX(2, bs_round_to_int((double) metrics->item_size_px * 0.07));
-  metrics->content_pad_bottom_px = MAX(4, bs_round_to_int((double) metrics->item_size_px * 0.11));
-  metrics->content_gap_px = MAX(4, bs_round_to_int((double) metrics->item_size_px * 0.11));
+  metrics->content_pad_top_px = MAX(2, bs_round_to_int((double) metrics->item_size_px * 0.05));
+  metrics->content_pad_bottom_px = MAX(3, bs_round_to_int((double) metrics->item_size_px * 0.07));
+  metrics->content_gap_px = MAX(4, bs_round_to_int((double) metrics->item_size_px * 0.09));
   metrics->item_border_radius_px = MAX(12, bs_round_to_int((double) metrics->item_size_px * 0.29));
-  metrics->indicator_size_px = MAX(4, bs_round_to_int((double) metrics->item_size_px * 0.11));
+  metrics->indicator_size_px = MAX(4, bs_round_to_int((double) metrics->item_size_px * 0.09));
   metrics->focused_indicator_size_px = metrics->indicator_size_px + 1;
+  metrics->indicator_offset_y_px =
+    MAX(1, (metrics->content_pad_bottom_px + metrics->root_pad_bottom_px) - 1);
   metrics->hover_range_cap_units = (int) config->hover_range_cap_units;
   metrics->max_visual_scale = config->magnification_scale;
   metrics->max_hover_lift_px = config->magnification_enabled
@@ -176,6 +179,7 @@ bs_dock_metrics_build_css(const BsDockMetrics *metrics) {
                          "  min-height: %dpx;"
                          "  border-radius: 999px;"
                          "  background: rgba(255, 255, 255, 0.72);"
+                         "  transform: translateY(%dpx);"
                          "}"
                          ".dock-indicator.is-focused {"
                          "  background: rgba(255, 255, 255, 0.96);"
@@ -201,6 +205,7 @@ bs_dock_metrics_build_css(const BsDockMetrics *metrics) {
                          metrics->item_size_px,
                          metrics->item_border_radius_px,
                          metrics->indicator_size_px,
-                         metrics->indicator_size_px);
+                         metrics->indicator_size_px,
+                         metrics->indicator_offset_y_px);
   return g_string_free(css, false);
 }
