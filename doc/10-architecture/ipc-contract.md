@@ -149,7 +149,22 @@ topic 与 `BsTopic` 一致：
     },
     "dock": { "items": [] },
     "tray": { "items": [] },
-    "settings": { "config_loaded": true }
+    "settings": {
+      "config_loaded": true,
+      "pinned_apps": [],
+      "dock": {
+        "icon_size_px": 56,
+        "magnification_enabled": true,
+        "magnification_scale": 1.8,
+        "hover_range_cap_units": 4,
+        "spacing_px": 0,
+        "bottom_margin_px": 14,
+        "show_running_indicator": true,
+        "animate_opening_apps": true,
+        "display_mode": "immersive",
+        "center_on_primary_output": true
+      }
+    }
   }
 }
 ```
@@ -225,7 +240,7 @@ topic 与 `BsTopic` 一致：
 
 ## 当前 core 落地状态
 
-- `snapshot` 已输出真实 topic 结构：`shell/windows/workspaces/dock` 为完整结构，`settings` 已包含 `pinned_apps`，`tray` 仍为最小结构
+- `snapshot` 已输出真实 topic 结构：`shell/windows/workspaces/dock` 为完整结构，`settings` 已包含 `pinned_apps` 与 `dock` 配置对象，`tray` 仍为最小结构
 - `subscribe` 已在 IPC server 内维持客户端订阅集合，并在 `StateStore` topic 变化时向对应客户端推送 `event`
 - `StateStore` 支持批量更新事务（begin/finish），可在一次提交中原子推进多 topic 版本
 - `switch_workspace`、`focus_window`、`activate_app`、`focus_next_app_window`、`focus_prev_app_window`、`launch_app`、`pin_app`、`unpin_app` 已接入真实执行链路
