@@ -1,3 +1,19 @@
+git_commit = 'unknown'
+git_commit_result = run_command('git', 'rev-parse', '--short=12', 'HEAD', check: false)
+if git_commit_result.returncode() == 0
+  git_commit = git_commit_result.stdout().strip()
+endif
+
+build_info_conf = configuration_data()
+build_info_conf.set_quoted('BS_BUILD_VERSION', meson.project_version())
+build_info_conf.set_quoted('BS_BUILD_COMMIT', git_commit)
+
+configure_file(
+  input: 'build_info.h.in',
+  output: 'build_info.h',
+  configuration: build_info_conf,
+)
+
 core_includes = include_directories('.')
 
 bit_shelld_sources = files(
