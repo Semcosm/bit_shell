@@ -42,6 +42,24 @@ bs_dock_display_mode_from_string(const char *value, BsDockDisplayMode *mode_out)
 }
 
 void
+bs_dock_config_init_defaults(BsDockConfig *config) {
+  g_return_if_fail(config != NULL);
+
+  memset(config, 0, sizeof(*config));
+  config->icon_size_px = 56;
+  config->magnification_enabled = true;
+  config->magnification_scale = 1.80;
+  config->hover_range_auto = true;
+  config->hover_range_px = 0;
+  config->spacing_px = 0;
+  config->bottom_margin_px = 14;
+  config->show_running_indicator = true;
+  config->animate_opening_apps = true;
+  config->display_mode = BS_DOCK_DISPLAY_MODE_IMMERSIVE;
+  config->center_on_primary_output = true;
+}
+
+void
 bs_runtime_paths_init(BsRuntimePaths *paths) {
   g_return_if_fail(paths != NULL);
   memset(paths, 0, sizeof(*paths));
@@ -107,11 +125,7 @@ bs_shell_config_init_defaults(BsShellConfig *config) {
   config->bar.show_tray = true;
   config->bar.show_clock = true;
 
-  config->dock.icon_size_px = 48;
-  config->dock.spacing_px = 8;
-  config->dock.display_mode = BS_DOCK_DISPLAY_MODE_IMMERSIVE;
-  config->dock.enable_magnification = true;
-  config->dock.center_on_primary_output = true;
+  bs_dock_config_init_defaults(&config->dock);
 
   config->launchpad.resident = true;
   config->launchpad.grid_icon_size_px = 64;

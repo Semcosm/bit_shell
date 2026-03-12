@@ -4,6 +4,7 @@
 #include <glib.h>
 #include <stdint.h>
 
+#include "model/config.h"
 #include "model/ipc.h"
 #include "model/types.h"
 
@@ -17,6 +18,7 @@ typedef struct {
   GHashTable *apps;
   GHashTable *dock_items;
   GPtrArray *pinned_app_ids;
+  BsDockConfig dock_config;
 } BsSnapshot;
 
 void bs_snapshot_init(BsSnapshot *snapshot);

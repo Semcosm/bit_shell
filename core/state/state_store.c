@@ -768,3 +768,12 @@ bs_state_store_replace_pinned_app_ids(BsStateStore *store, GPtrArray *pinned_app
   bs_state_store_run_derived_updater(store);
   bs_state_store_mark_topic_changed(store, BS_TOPIC_SETTINGS);
 }
+
+void
+bs_state_store_replace_dock_config(BsStateStore *store, const BsDockConfig *dock_config) {
+  g_return_if_fail(store != NULL);
+  g_return_if_fail(dock_config != NULL);
+
+  store->snapshot.dock_config = *dock_config;
+  bs_state_store_mark_topic_changed(store, BS_TOPIC_SETTINGS);
+}

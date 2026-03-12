@@ -374,13 +374,26 @@ static void
 bs_json_append_settings_payload(GString *json, const BsSnapshot *snapshot) {
   g_string_append(json, "{\"config_loaded\":true,\"pinned_apps\":");
   bs_json_append_string_array(json, snapshot->pinned_app_ids);
-  g_string_append(json, "}");
+  g_string_append_printf(json,
+                         ",\"dock\":{\"icon_size_px\":%u,\"magnification_enabled\":%s,\"magnification_scale\":%.3f,\"hover_range_auto\":%s,\"hover_range_px\":%u,\"spacing_px\":%u,\"bottom_margin_px\":%u,\"show_running_indicator\":%s,\"animate_opening_apps\":%s,\"display_mode\":\"%s\",\"center_on_primary_output\":%s}}",
+                         snapshot->dock_config.icon_size_px,
+                         snapshot->dock_config.magnification_enabled ? "true" : "false",
+                         snapshot->dock_config.magnification_scale,
+                         snapshot->dock_config.hover_range_auto ? "true" : "false",
+                         snapshot->dock_config.hover_range_px,
+                         snapshot->dock_config.spacing_px,
+                         snapshot->dock_config.bottom_margin_px,
+                         snapshot->dock_config.show_running_indicator ? "true" : "false",
+                         snapshot->dock_config.animate_opening_apps ? "true" : "false",
+                         bs_dock_display_mode_to_string(snapshot->dock_config.display_mode),
+                         snapshot->dock_config.center_on_primary_output ? "true" : "false");
 }
 
 void
 bs_snapshot_init(BsSnapshot *snapshot) {
   g_return_if_fail(snapshot != NULL);
   memset(snapshot, 0, sizeof(*snapshot));
+  bs_dock_config_init_defaults(&snapshot->dock_config);
   snapshot->windows = bs_hash_table_new_full_map(bs_hash_table_destroy_window);
   snapshot->workspaces = bs_hash_table_new_full_map(bs_hash_table_destroy_workspace);
   snapshot->outputs = bs_hash_table_new_full_map(bs_hash_table_destroy_output);

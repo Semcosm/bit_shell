@@ -28,9 +28,15 @@ typedef struct {
 
 typedef struct {
   uint32_t icon_size_px;
+  bool magnification_enabled;
+  double magnification_scale;
+  bool hover_range_auto;
+  uint32_t hover_range_px;
   uint32_t spacing_px;
+  uint32_t bottom_margin_px;
+  bool show_running_indicator;
+  bool animate_opening_apps;
   BsDockDisplayMode display_mode;
-  bool enable_magnification;
   bool center_on_primary_output;
 } BsDockConfig;
 
@@ -53,6 +59,7 @@ typedef struct {
 
 const char *bs_dock_display_mode_to_string(BsDockDisplayMode mode);
 bool bs_dock_display_mode_from_string(const char *value, BsDockDisplayMode *mode_out);
+void bs_dock_config_init_defaults(BsDockConfig *config);
 
 void bs_runtime_paths_init(BsRuntimePaths *paths);
 void bs_runtime_paths_init_user_defaults(BsRuntimePaths *paths);

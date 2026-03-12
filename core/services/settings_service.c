@@ -100,6 +100,7 @@ bs_settings_service_parse_state(BsSettingsService *service,
   if (contents == NULL || *contents == '\0') {
     bs_state_store_begin_update(service->store);
     bs_state_store_replace_pinned_app_ids(service->store, NULL);
+    bs_state_store_replace_dock_config(service->store, &service->shell_config.dock);
     bs_state_store_finish_update(service->store);
     return true;
   }
@@ -145,6 +146,7 @@ bs_settings_service_parse_state(BsSettingsService *service,
 
   bs_state_store_begin_update(service->store);
   bs_state_store_replace_pinned_app_ids(service->store, pinned_app_ids);
+  bs_state_store_replace_dock_config(service->store, &service->shell_config.dock);
   bs_state_store_finish_update(service->store);
   return true;
 }
@@ -167,9 +169,15 @@ bs_settings_service_build_config_stub(const BsShellConfig *config) {
 
   g_string_append(content, "[dock]\n");
   g_string_append_printf(content, "icon_size_px = %u\n", config->dock.icon_size_px);
+  g_string_append_printf(content, "magnification_enabled = %s\n", config->dock.magnification_enabled ? "true" : "false");
+  g_string_append_printf(content, "magnification_scale = %.2f\n", config->dock.magnification_scale);
+  g_string_append_printf(content, "hover_range_auto = %s\n", config->dock.hover_range_auto ? "true" : "false");
+  g_string_append_printf(content, "hover_range_px = %u\n", config->dock.hover_range_px);
   g_string_append_printf(content, "spacing_px = %u\n", config->dock.spacing_px);
+  g_string_append_printf(content, "bottom_margin_px = %u\n", config->dock.bottom_margin_px);
+  g_string_append_printf(content, "show_running_indicator = %s\n", config->dock.show_running_indicator ? "true" : "false");
+  g_string_append_printf(content, "animate_opening_apps = %s\n", config->dock.animate_opening_apps ? "true" : "false");
   g_string_append_printf(content, "display_mode = \"%s\"\n", bs_dock_display_mode_to_string(config->dock.display_mode));
-  g_string_append_printf(content, "enable_magnification = %s\n", config->dock.enable_magnification ? "true" : "false");
   g_string_append_printf(content, "center_on_primary_output = %s\n\n", config->dock.center_on_primary_output ? "true" : "false");
 
   g_string_append(content, "[launchpad]\n");

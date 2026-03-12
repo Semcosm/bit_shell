@@ -56,5 +56,6 @@ void bs_state_store_set_window_focus_timestamp(BsStateStore *store,
 void bs_state_store_replace_apps(BsStateStore *store, GPtrArray *apps);
 void bs_state_store_replace_dock_items(BsStateStore *store, GPtrArray *dock_items);
 void bs_state_store_replace_pinned_app_ids(BsStateStore *store, GPtrArray *pinned_app_ids);
+void bs_state_store_replace_dock_config(BsStateStore *store, const BsDockConfig *dock_config);
 
 #endif

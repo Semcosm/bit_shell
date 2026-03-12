@@ -27,7 +27,9 @@ executable(
 )
 
 bit_dock_sources = files(
+  'model/config.c',
   'frontends/bit_dock/main.c',
+  'frontends/bit_dock/dock_layout.c',
   'frontends/bit_dock/dock_app.c',
 )
 
