@@ -70,6 +70,7 @@
 - `load()` 当前会解析 `config.toml` 中的 `shell/bar/dock/launchpad` 标量字段；其中 Dock 走 `parse -> normalize -> derive` 链路：解析层只做文本到字段的读取与类型/枚举校验，`BsDockConfig` 在进入前端前统一归一化，几何与动画参数仍由运行时派生。
 - `dock` 配置当前只持久化 `BsDockConfig`；Dock 几何与动画参数由前端在运行时派生为 `BsDockMetrics`，不会写入磁盘。
 - `hover_range_cap_units` 的语义是“自动 hover 半径的图标步长上限”，最终半径仍按前端自动算法计算，并以该上限封顶。
+- `animate_opening_apps` 当前已在 `bit_dock` 前端生效：未运行应用在 `launch_app` 发送成功后会触发启动 bounce，进入 `running/focused` 后允许提前结束，但会先平顺收尾到静止位。
 - `pinned_apps` 当前已驱动 `DockService` 的 pinned + running 聚合。
 - `pin_app` / `unpin_app` 命令当前会立即触发一次 `flush()`。
 - `flush()` 会按当前内存状态重写 `state.json`，其中 `pinned_apps` 为真实内容，其余列表仍是占位结构。

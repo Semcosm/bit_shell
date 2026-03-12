@@ -19,6 +19,7 @@
 - 滚轮：切换同 app 窗口
 - 拖拽：重排 pinned
 - hover：按整排连续指针场驱动 magnification、局部横向让位和竖向抬升
+- 启动反馈：`launch_app` 发送成功后触发两段式 bounce；应用进入 `running/focused` 后允许提前结束，但会先平顺收尾到静止位
 
 ## 激活规则
 
@@ -82,21 +83,23 @@
 
 ## 当前视觉分层
 
-当前实现将位移与缩放拆到两层：
+当前实现将位移与缩放拆到三层：
 
 - `dock-slot`：负责横向位移
-- `dock-slot-content`：负责纵向抬升
-- `dock-item`：负责 magnification scale
-- `dock-indicator`：只表达 running/focused 指示，不参与 scale 决策
+- `dock-slot-content`：保留内容容器与指示点布局，不再承担纵向位移
+- `dock-item`：负责图标按钮自身的纵向位移与 magnification scale
+- `dock-indicator`：只表达 running/focused 指示；随 slot 横向滑动，但不跟随图标的纵向抬升/启动 bounce 一起上下位移
 
 当前状态不再通过离散 bucket class 叠加，而是连续输出到动态样式：
 
 - `dock-slot`：`translateX(current_offset_x)`
-- `dock-slot-content`：`translateY(-current_lift)`
-- `dock-item`：`scale(current_scale)`
+- `dock-slot-content`：保持 `translateY(0)`
+- `dock-item`：`translateY(current_lift + launch_feedback_y) scale(current_scale)`
 
 当前动画模型：
 
 - `scale`、`lift`、`offset` 都保留 `current_*` 与 `target_*`
 - 每帧通过 GTK tick 回调做时间常数插值，而不是通过固定 `mag-*` bucket 切换
 - 目标布局使用一维约束投影求解，避免鼠标位于两个图标中缝时出现离散锚点切换抖动
+- 启动 bounce 复用同一个全局 tick 与动态样式链路，不单独建立第二套 CSS/timer 动画系统
+- 启动 bounce 是 item 级瞬态反馈分量，不进入 hover range、横向让位或 magnification 的几何求解器
