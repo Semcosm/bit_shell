@@ -39,9 +39,14 @@
 ### dock
 
 - `dock.icon_size_px`
+- `dock.magnification_enabled`
+- `dock.magnification_scale`
+- `dock.hover_range_cap_units`
 - `dock.spacing_px`
+- `dock.bottom_margin_px`
+- `dock.show_running_indicator`
+- `dock.animate_opening_apps`
 - `dock.display_mode`
-- `dock.enable_magnification`
 - `dock.center_on_primary_output`
 
 ### launchpad
@@ -62,7 +67,9 @@
 
 - `BsSettingsService.load()` 会确保 `config.toml` 与 `state.json` 的父目录存在（使用 `0700` 创建）。
 - 若文件缺失，core 会写入一份 stub 文件。
-- `load()` 当前仍不会解析 `config.toml` 字段，但已会解析 `state.json.pinned_apps` 并回填到内存状态。
+- `load()` 当前会解析 `config.toml` 中的 `shell/bar/dock/launchpad` 标量字段；解析层只做值校验和覆盖默认值，不做几何派生。
+- `dock` 配置当前只持久化 `BsDockConfig`；Dock 几何与动画参数由前端在运行时派生为 `BsDockMetrics`，不会写入磁盘。
+- `hover_range_cap_units` 的语义是“自动 hover 半径的图标步长上限”，最终半径仍按前端自动算法计算，并以该上限封顶。
 - `pinned_apps` 当前已驱动 `DockService` 的 pinned + running 聚合。
 - `pin_app` / `unpin_app` 命令当前会立即触发一次 `flush()`。
 - `flush()` 会按当前内存状态重写 `state.json`，其中 `pinned_apps` 为真实内容，其余列表仍是占位结构。
@@ -87,10 +94,15 @@ show_tray = true
 show_clock = true
 
 [dock]
-icon_size_px = 48
-spacing_px = 8
+icon_size_px = 56
+magnification_enabled = true
+magnification_scale = 1.80
+hover_range_cap_units = 4
+spacing_px = 0
+bottom_margin_px = 14
+show_running_indicator = true
+animate_opening_apps = true
 display_mode = "immersive"
-enable_magnification = true
 center_on_primary_output = true
 
 [launchpad]

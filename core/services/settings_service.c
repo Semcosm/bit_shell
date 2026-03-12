@@ -14,6 +14,22 @@ struct _BsSettingsService {
   bool dirty_state;
 };
 
+static char *bs_settings_service_strip_toml_comment(const char *line);
+static bool bs_settings_service_parse_bool_value(const char *value, bool *out_value);
+static bool bs_settings_service_parse_uint32_value(const char *value,
+                                                   uint32_t min_value,
+                                                   uint32_t max_value,
+                                                   uint32_t *out_value);
+static bool bs_settings_service_parse_double_value(const char *value,
+                                                   double min_value,
+                                                   double max_value,
+                                                   double *out_value);
+static char *bs_settings_service_parse_string_value(const char *value);
+static bool bs_settings_service_parse_config(BsSettingsService *service,
+                                            const char *contents,
+                                            BsShellConfig *config_out,
+                                            GError **error);
+
 static bool
 bs_settings_service_ensure_parent_dir(const char *path, GError **error) {
   g_autofree char *parent = NULL;
@@ -37,6 +53,324 @@ bs_settings_service_ensure_parent_dir(const char *path, GError **error) {
   }
 
   return true;
+}
+
+static char *
+bs_settings_service_strip_toml_comment(const char *line) {
+  GString *out = NULL;
+  bool in_quotes = false;
+
+  g_return_val_if_fail(line != NULL, g_strdup(""));
+
+  out = g_string_new(NULL);
+  for (const char *cursor = line; *cursor != '\0'; cursor++) {
+    if (*cursor == '"' && (cursor == line || cursor[-1] != '\\')) {
+      in_quotes = !in_quotes;
+    } else if (*cursor == '#' && !in_quotes) {
+      break;
+    }
+
+    g_string_append_c(out, *cursor);
+  }
+
+  return g_string_free(out, false);
+}
+
+static bool
+bs_settings_service_parse_bool_value(const char *value, bool *out_value) {
+  g_return_val_if_fail(value != NULL, false);
+  g_return_val_if_fail(out_value != NULL, false);
+
+  if (g_strcmp0(value, "true") == 0) {
+    *out_value = true;
+    return true;
+  }
+  if (g_strcmp0(value, "false") == 0) {
+    *out_value = false;
+    return true;
+  }
+
+  return false;
+}
+
+static bool
+bs_settings_service_parse_uint32_value(const char *value,
+                                       uint32_t min_value,
+                                       uint32_t max_value,
+                                       uint32_t *out_value) {
+  guint64 parsed = 0;
+  char *end = NULL;
+
+  g_return_val_if_fail(value != NULL, false);
+  g_return_val_if_fail(out_value != NULL, false);
+
+  errno = 0;
+  parsed = g_ascii_strtoull(value, &end, 10);
+  if (errno != 0 || end == value || *end != '\0' || parsed < min_value || parsed > max_value) {
+    return false;
+  }
+
+  *out_value = (uint32_t) parsed;
+  return true;
+}
+
+static bool
+bs_settings_service_parse_double_value(const char *value,
+                                       double min_value,
+                                       double max_value,
+                                       double *out_value) {
+  double parsed = 0.0;
+  char *end = NULL;
+
+  g_return_val_if_fail(value != NULL, false);
+  g_return_val_if_fail(out_value != NULL, false);
+
+  errno = 0;
+  parsed = g_ascii_strtod(value, &end);
+  if (errno != 0 || end == value || *end != '\0' || parsed < min_value || parsed > max_value) {
+    return false;
+  }
+
+  *out_value = parsed;
+  return true;
+}
+
+static char *
+bs_settings_service_parse_string_value(const char *value) {
+  g_autofree char *raw = NULL;
+
+  g_return_val_if_fail(value != NULL, NULL);
+
+  if (value[0] == '"') {
+    gsize len = strlen(value);
+    if (len < 2 || value[len - 1] != '"') {
+      return NULL;
+    }
+
+    raw = g_strndup(value + 1, len - 2);
+    return g_strcompress(raw);
+  }
+
+  return g_strdup(value);
+}
+
+static bool
+bs_settings_service_parse_config(BsSettingsService *service,
+                                 const char *contents,
+                                 BsShellConfig *config_out,
+                                 GError **error) {
+  g_auto(GStrv) lines = NULL;
+  g_autofree char *current_section = NULL;
+  BsShellConfig parsed;
+
+  g_return_val_if_fail(service != NULL, false);
+  g_return_val_if_fail(config_out != NULL, false);
+
+  bs_shell_config_init_defaults(&parsed);
+  bs_runtime_paths_clear(&parsed.paths);
+  bs_runtime_paths_copy(&parsed.paths, &service->shell_config.paths);
+
+  if (contents == NULL || *contents == '\0') {
+    *config_out = parsed;
+    return true;
+  }
+
+  lines = g_strsplit(contents, "\n", -1);
+  for (guint line_index = 0; lines[line_index] != NULL; line_index++) {
+    g_autofree char *without_comment = NULL;
+    char *line = NULL;
+    char *separator = NULL;
+    char *key = NULL;
+    char *value = NULL;
+
+    without_comment = bs_settings_service_strip_toml_comment(lines[line_index]);
+    line = g_strstrip(without_comment);
+    if (*line == '\0') {
+      continue;
+    }
+
+    if (line[0] == '[') {
+      gsize len = strlen(line);
+      if (len < 3 || line[len - 1] != ']') {
+        g_set_error(error,
+                    G_IO_ERROR,
+                    G_IO_ERROR_INVALID_DATA,
+                    "config.toml invalid section header at line %u",
+                    line_index + 1);
+        goto fail;
+      }
+
+      g_free(current_section);
+      current_section = g_strndup(line + 1, len - 2);
+      g_strstrip(current_section);
+      continue;
+    }
+
+    separator = strchr(line, '=');
+    if (separator == NULL) {
+      g_set_error(error,
+                  G_IO_ERROR,
+                  G_IO_ERROR_INVALID_DATA,
+                  "config.toml invalid assignment at line %u",
+                  line_index + 1);
+      goto fail;
+    }
+
+    *separator = '\0';
+    key = g_strstrip(line);
+    value = g_strstrip(separator + 1);
+    if (current_section == NULL || *key == '\0' || *value == '\0') {
+      g_set_error(error,
+                  G_IO_ERROR,
+                  G_IO_ERROR_INVALID_DATA,
+                  "config.toml invalid key/value at line %u",
+                  line_index + 1);
+      goto fail;
+    }
+
+    if (g_strcmp0(current_section, "shell") == 0) {
+      if (g_strcmp0(key, "auto_reconnect_niri") == 0) {
+        if (!bs_settings_service_parse_bool_value(value, &parsed.auto_reconnect_niri)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid shell.auto_reconnect_niri at line %u", line_index + 1);
+          goto fail;
+        }
+      } else if (g_strcmp0(key, "tray_watcher_name") == 0) {
+        g_autofree char *parsed_value = bs_settings_service_parse_string_value(value);
+        if (parsed_value == NULL) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid shell.tray_watcher_name at line %u", line_index + 1);
+          goto fail;
+        }
+        g_free(parsed.tray_watcher_name);
+        parsed.tray_watcher_name = g_steal_pointer(&parsed_value);
+      } else if (g_strcmp0(key, "primary_output") == 0) {
+        g_autofree char *parsed_value = bs_settings_service_parse_string_value(value);
+        if (parsed_value == NULL) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid shell.primary_output at line %u", line_index + 1);
+          goto fail;
+        }
+        g_free(parsed.primary_output);
+        parsed.primary_output = g_steal_pointer(&parsed_value);
+      }
+      continue;
+    }
+
+    if (g_strcmp0(current_section, "bar") == 0) {
+      if (g_strcmp0(key, "height_px") == 0) {
+        if (!bs_settings_service_parse_uint32_value(value, 16, 128, &parsed.bar.height_px)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid bar.height_px at line %u", line_index + 1);
+          goto fail;
+        }
+      } else if (g_strcmp0(key, "show_workspace_strip") == 0) {
+        if (!bs_settings_service_parse_bool_value(value, &parsed.bar.show_workspace_strip)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid bar.show_workspace_strip at line %u", line_index + 1);
+          goto fail;
+        }
+      } else if (g_strcmp0(key, "show_focused_title") == 0) {
+        if (!bs_settings_service_parse_bool_value(value, &parsed.bar.show_focused_title)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid bar.show_focused_title at line %u", line_index + 1);
+          goto fail;
+        }
+      } else if (g_strcmp0(key, "show_tray") == 0) {
+        if (!bs_settings_service_parse_bool_value(value, &parsed.bar.show_tray)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid bar.show_tray at line %u", line_index + 1);
+          goto fail;
+        }
+      } else if (g_strcmp0(key, "show_clock") == 0) {
+        if (!bs_settings_service_parse_bool_value(value, &parsed.bar.show_clock)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid bar.show_clock at line %u", line_index + 1);
+          goto fail;
+        }
+      }
+      continue;
+    }
+
+    if (g_strcmp0(current_section, "dock") == 0) {
+      if (g_strcmp0(key, "icon_size_px") == 0) {
+        if (!bs_settings_service_parse_uint32_value(value, 32, 128, &parsed.dock.icon_size_px)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid dock.icon_size_px at line %u", line_index + 1);
+          goto fail;
+        }
+      } else if (g_strcmp0(key, "magnification_enabled") == 0) {
+        if (!bs_settings_service_parse_bool_value(value, &parsed.dock.magnification_enabled)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid dock.magnification_enabled at line %u", line_index + 1);
+          goto fail;
+        }
+      } else if (g_strcmp0(key, "magnification_scale") == 0) {
+        if (!bs_settings_service_parse_double_value(value, 1.0, 3.0, &parsed.dock.magnification_scale)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid dock.magnification_scale at line %u", line_index + 1);
+          goto fail;
+        }
+      } else if (g_strcmp0(key, "hover_range_cap_units") == 0) {
+        if (!bs_settings_service_parse_uint32_value(value, 2, 12, &parsed.dock.hover_range_cap_units)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid dock.hover_range_cap_units at line %u", line_index + 1);
+          goto fail;
+        }
+      } else if (g_strcmp0(key, "spacing_px") == 0) {
+        if (!bs_settings_service_parse_uint32_value(value, 0, 64, &parsed.dock.spacing_px)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid dock.spacing_px at line %u", line_index + 1);
+          goto fail;
+        }
+      } else if (g_strcmp0(key, "bottom_margin_px") == 0) {
+        if (!bs_settings_service_parse_uint32_value(value, 0, 128, &parsed.dock.bottom_margin_px)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid dock.bottom_margin_px at line %u", line_index + 1);
+          goto fail;
+        }
+      } else if (g_strcmp0(key, "show_running_indicator") == 0) {
+        if (!bs_settings_service_parse_bool_value(value, &parsed.dock.show_running_indicator)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid dock.show_running_indicator at line %u", line_index + 1);
+          goto fail;
+        }
+      } else if (g_strcmp0(key, "animate_opening_apps") == 0) {
+        if (!bs_settings_service_parse_bool_value(value, &parsed.dock.animate_opening_apps)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid dock.animate_opening_apps at line %u", line_index + 1);
+          goto fail;
+        }
+      } else if (g_strcmp0(key, "display_mode") == 0) {
+        g_autofree char *parsed_value = bs_settings_service_parse_string_value(value);
+        if (parsed_value == NULL || !bs_dock_display_mode_from_string(parsed_value, &parsed.dock.display_mode)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid dock.display_mode at line %u", line_index + 1);
+          goto fail;
+        }
+      } else if (g_strcmp0(key, "center_on_primary_output") == 0) {
+        if (!bs_settings_service_parse_bool_value(value, &parsed.dock.center_on_primary_output)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid dock.center_on_primary_output at line %u", line_index + 1);
+          goto fail;
+        }
+      }
+      continue;
+    }
+
+    if (g_strcmp0(current_section, "launchpad") == 0) {
+      if (g_strcmp0(key, "resident") == 0) {
+        if (!bs_settings_service_parse_bool_value(value, &parsed.launchpad.resident)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid launchpad.resident at line %u", line_index + 1);
+          goto fail;
+        }
+      } else if (g_strcmp0(key, "grid_icon_size_px") == 0) {
+        if (!bs_settings_service_parse_uint32_value(value, 32, 256, &parsed.launchpad.grid_icon_size_px)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid launchpad.grid_icon_size_px at line %u", line_index + 1);
+          goto fail;
+        }
+      } else if (g_strcmp0(key, "max_recent_apps") == 0) {
+        if (!bs_settings_service_parse_uint32_value(value, 1, 64, &parsed.launchpad.max_recent_apps)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid launchpad.max_recent_apps at line %u", line_index + 1);
+          goto fail;
+        }
+      } else if (g_strcmp0(key, "show_categories") == 0) {
+        if (!bs_settings_service_parse_bool_value(value, &parsed.launchpad.show_categories)) {
+          g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid launchpad.show_categories at line %u", line_index + 1);
+          goto fail;
+        }
+      }
+    }
+  }
+
+  *config_out = parsed;
+  return true;
+
+fail:
+  bs_shell_config_clear(&parsed);
+  return false;
 }
 
 static GPtrArray *
@@ -86,6 +420,7 @@ bs_settings_service_append_string_array_json(GString *content, GPtrArray *values
 
 static bool
 bs_settings_service_parse_state(BsSettingsService *service,
+                                const BsDockConfig *dock_config,
                                 const char *contents,
                                 GError **error) {
   g_autoptr(JsonParser) parser = NULL;
@@ -96,11 +431,12 @@ bs_settings_service_parse_state(BsSettingsService *service,
   JsonArray *pinned_apps = NULL;
 
   g_return_val_if_fail(service != NULL, false);
+  g_return_val_if_fail(dock_config != NULL, false);
 
   if (contents == NULL || *contents == '\0') {
     bs_state_store_begin_update(service->store);
     bs_state_store_replace_pinned_app_ids(service->store, NULL);
-    bs_state_store_replace_dock_config(service->store, &service->shell_config.dock);
+    bs_state_store_replace_dock_config(service->store, dock_config);
     bs_state_store_finish_update(service->store);
     return true;
   }
@@ -146,7 +482,7 @@ bs_settings_service_parse_state(BsSettingsService *service,
 
   bs_state_store_begin_update(service->store);
   bs_state_store_replace_pinned_app_ids(service->store, pinned_app_ids);
-  bs_state_store_replace_dock_config(service->store, &service->shell_config.dock);
+  bs_state_store_replace_dock_config(service->store, dock_config);
   bs_state_store_finish_update(service->store);
   return true;
 }
@@ -258,6 +594,7 @@ bs_settings_service_load(BsSettingsService *service, GError **error) {
   g_autofree char *state_stub = NULL;
   g_autofree char *config_contents = NULL;
   g_autofree char *state_contents = NULL;
+  BsShellConfig parsed_config;
 
   g_return_val_if_fail(service != NULL, false);
 
@@ -278,10 +615,18 @@ bs_settings_service_load(BsSettingsService *service, GError **error) {
     (void) g_file_get_contents(service->state_path, &state_contents, NULL, NULL);
   }
 
-  if (config_contents != NULL && *config_contents != '\0') {
-    g_message("[bit_shelld] settings load stub read config from %s (parser TODO)", service->config_path);
+  if (!bs_settings_service_parse_config(service, config_contents, &parsed_config, error)) {
+    return false;
   }
-  return bs_settings_service_parse_state(service, state_contents, error);
+
+  if (!bs_settings_service_parse_state(service, &parsed_config.dock, state_contents, error)) {
+    bs_shell_config_clear(&parsed_config);
+    return false;
+  }
+
+  bs_shell_config_clear(&service->shell_config);
+  service->shell_config = parsed_config;
+  return true;
 }
 
 bool
