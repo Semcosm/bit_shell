@@ -15,6 +15,14 @@
 #define BS_DOCK_TICK_EPSILON_OFFSET 0.01
 #define BS_DOCK_LAYOUT_EPSILON 0.01
 #define BS_DOCK_NAMESPACE "bit-dock"
+#define BS_DOCK_LAUNCH_BOUNCE_DURATION_US ((gint64) 1620000)
+#define BS_DOCK_LAUNCH_SETTLE_DURATION_US ((gint64) 390000)
+
+typedef enum {
+  BS_DOCK_LAUNCH_FEEDBACK_NONE = 0,
+  BS_DOCK_LAUNCH_FEEDBACK_BOUNCING,
+  BS_DOCK_LAUNCH_FEEDBACK_SETTLING,
+} BsDockLaunchFeedbackState;
 
 typedef struct {
   char *app_key;
@@ -57,6 +65,11 @@ typedef struct {
   double y_offset_px;
   double visual_scale;
   double slot_width_px;
+  BsDockLaunchFeedbackState launch_feedback_state;
+  gint64 launch_feedback_start_us;
+  gint64 launch_feedback_settle_start_us;
+  double launch_settle_from_y_px;
+  double launch_bounce_y_px;
 } BsDockItemWidgets;
 
 struct _BsDockApp {
@@ -90,6 +103,7 @@ struct _BsDockApp {
   BsDockConfig config;
   BsDockMetrics metrics;
   bool dynamic_css_structure_dirty;
+  bool visuals_dirty;
   bool hover_active;
   bool ipc_ready;
 };
@@ -142,6 +156,13 @@ static bool bs_dock_app_send_app_window_focus_request(BsDockApp *app,
                                                       const BsDockItemActionData *action,
                                                       int direction,
                                                       GError **error);
+static BsDockItemWidgets *bs_dock_app_find_item_widgets(BsDockApp *app, const char *app_key);
+static void bs_dock_app_begin_launch_feedback(BsDockApp *app, const char *app_key);
+static void bs_dock_app_cancel_launch_feedback(BsDockApp *app, BsDockItemWidgets *widgets);
+static bool bs_dock_app_update_launch_feedback(BsDockApp *app, gint64 frame_time_us);
+static void bs_dock_app_compose_effective_visuals(BsDockItemWidgets *widgets,
+                                                  double *out_translate_y,
+                                                  double *out_scale);
 static void bs_dock_app_apply_dock_config(BsDockApp *app, const BsDockConfig *config);
 static void bs_dock_app_begin_read(BsDockApp *app);
 static void bs_dock_app_on_read_line(GObject *source_object,
@@ -590,6 +611,189 @@ bs_dock_app_apply_layout(BsDockApp *app, BsDockItemWidgets *widgets) {
 }
 
 static void
+bs_dock_app_compose_effective_visuals(BsDockItemWidgets *widgets,
+                                      double *out_translate_y,
+                                      double *out_scale) {
+  g_return_if_fail(widgets != NULL);
+  g_return_if_fail(out_translate_y != NULL);
+  g_return_if_fail(out_scale != NULL);
+
+  *out_translate_y = widgets->y_offset_px + widgets->launch_bounce_y_px;
+  *out_scale = widgets->visual_scale;
+}
+
+static double
+bs_dock_app_launch_bounce_value_for_progress(BsDockApp *app, double progress) {
+  double first_peak = 0.0;
+  double second_peak = 0.0;
+  double segment_progress = 0.0;
+
+  g_return_val_if_fail(app != NULL, 0.0);
+
+  first_peak = -16.0;
+  second_peak = -16.0;
+  progress = CLAMP(progress, 0.0, 1.0);
+
+  if (progress <= 0.18) {
+    segment_progress = progress / 0.18;
+    segment_progress = segment_progress * segment_progress * (3.0 - (2.0 * segment_progress));
+    return first_peak * segment_progress;
+  }
+  if (progress <= 0.36) {
+    segment_progress = (progress - 0.18) / 0.18;
+    segment_progress = segment_progress * segment_progress * (3.0 - (2.0 * segment_progress));
+    return first_peak * (1.0 - segment_progress);
+  }
+  if (progress <= 0.52) {
+    segment_progress = (progress - 0.36) / 0.16;
+    segment_progress = segment_progress * segment_progress * (3.0 - (2.0 * segment_progress));
+    return second_peak * segment_progress;
+  }
+  if (progress <= 0.68) {
+    segment_progress = (progress - 0.52) / 0.16;
+    segment_progress = segment_progress * segment_progress * (3.0 - (2.0 * segment_progress));
+    return second_peak * (1.0 - segment_progress);
+  }
+
+  return 0.0;
+}
+
+static double
+bs_dock_app_launch_settle_value_for_progress(double start_y, double progress) {
+  double eased_progress = 0.0;
+
+  progress = CLAMP(progress, 0.0, 1.0);
+  eased_progress = progress * progress * (3.0 - (2.0 * progress));
+  return start_y * (1.0 - eased_progress);
+}
+
+static BsDockItemWidgets *
+bs_dock_app_find_item_widgets(BsDockApp *app, const char *app_key) {
+  g_return_val_if_fail(app != NULL, NULL);
+
+  if (app_key == NULL || *app_key == '\0' || app->item_widgets_by_app_key == NULL) {
+    return NULL;
+  }
+
+  return g_hash_table_lookup(app->item_widgets_by_app_key, app_key);
+}
+
+static void
+bs_dock_app_begin_launch_feedback(BsDockApp *app, const char *app_key) {
+  BsDockItemWidgets *widgets = NULL;
+
+  g_return_if_fail(app != NULL);
+
+  if (!app->config.animate_opening_apps) {
+    return;
+  }
+
+  widgets = bs_dock_app_find_item_widgets(app, app_key);
+  if (widgets == NULL) {
+    return;
+  }
+
+  widgets->launch_feedback_state = BS_DOCK_LAUNCH_FEEDBACK_BOUNCING;
+  widgets->launch_feedback_start_us = g_get_monotonic_time();
+  widgets->launch_feedback_settle_start_us = 0;
+  widgets->launch_settle_from_y_px = 0.0;
+  widgets->launch_bounce_y_px = 0.0;
+  app->visuals_dirty = true;
+  bs_dock_app_ensure_tick(app);
+}
+
+static void
+bs_dock_app_cancel_launch_feedback(BsDockApp *app, BsDockItemWidgets *widgets) {
+  g_return_if_fail(app != NULL);
+  g_return_if_fail(widgets != NULL);
+
+  if (widgets->launch_feedback_state == BS_DOCK_LAUNCH_FEEDBACK_NONE
+      && fabs(widgets->launch_bounce_y_px) <= BS_DOCK_TICK_EPSILON_OFFSET) {
+    return;
+  }
+
+  if (fabs(widgets->launch_bounce_y_px) <= BS_DOCK_TICK_EPSILON_OFFSET) {
+    widgets->launch_feedback_state = BS_DOCK_LAUNCH_FEEDBACK_NONE;
+    widgets->launch_feedback_start_us = 0;
+    widgets->launch_feedback_settle_start_us = 0;
+    widgets->launch_settle_from_y_px = 0.0;
+    widgets->launch_bounce_y_px = 0.0;
+  } else {
+    widgets->launch_feedback_state = BS_DOCK_LAUNCH_FEEDBACK_SETTLING;
+    widgets->launch_feedback_start_us = 0;
+    widgets->launch_feedback_settle_start_us = g_get_monotonic_time();
+    widgets->launch_settle_from_y_px = widgets->launch_bounce_y_px;
+  }
+  app->visuals_dirty = true;
+  bs_dock_app_ensure_tick(app);
+}
+
+static bool
+bs_dock_app_update_launch_feedback(BsDockApp *app, gint64 frame_time_us) {
+  bool any_active = false;
+
+  g_return_val_if_fail(app != NULL, false);
+  g_return_val_if_fail(app->ordered_item_widgets != NULL, false);
+
+  for (guint i = 0; i < app->ordered_item_widgets->len; i++) {
+    BsDockItemWidgets *widgets = g_ptr_array_index(app->ordered_item_widgets, i);
+    double next_bounce_y = 0.0;
+    double progress = 0.0;
+
+    if (widgets == NULL || widgets->launch_feedback_state == BS_DOCK_LAUNCH_FEEDBACK_NONE) {
+      continue;
+    }
+
+    if (widgets->launch_feedback_state == BS_DOCK_LAUNCH_FEEDBACK_BOUNCING) {
+      if (widgets->launch_feedback_start_us <= 0) {
+        widgets->launch_feedback_start_us = frame_time_us;
+      }
+
+      progress = (double) (frame_time_us - widgets->launch_feedback_start_us)
+                 / (double) BS_DOCK_LAUNCH_BOUNCE_DURATION_US;
+      if (progress >= 1.0) {
+        next_bounce_y = 0.0;
+        widgets->launch_feedback_state = BS_DOCK_LAUNCH_FEEDBACK_NONE;
+        widgets->launch_feedback_start_us = 0;
+        widgets->launch_feedback_settle_start_us = 0;
+        widgets->launch_settle_from_y_px = 0.0;
+      } else {
+        next_bounce_y = bs_dock_app_launch_bounce_value_for_progress(app, progress);
+      }
+    } else {
+      if (widgets->launch_feedback_settle_start_us <= 0) {
+        widgets->launch_feedback_settle_start_us = frame_time_us;
+      }
+
+      progress = (double) (frame_time_us - widgets->launch_feedback_settle_start_us)
+                 / (double) BS_DOCK_LAUNCH_SETTLE_DURATION_US;
+      if (progress >= 1.0) {
+        next_bounce_y = 0.0;
+        widgets->launch_feedback_state = BS_DOCK_LAUNCH_FEEDBACK_NONE;
+        widgets->launch_feedback_settle_start_us = 0;
+        widgets->launch_settle_from_y_px = 0.0;
+      } else {
+        next_bounce_y = bs_dock_app_launch_settle_value_for_progress(widgets->launch_settle_from_y_px,
+                                                                     progress);
+      }
+    }
+
+    if (fabs(next_bounce_y - widgets->launch_bounce_y_px) > BS_DOCK_TICK_EPSILON_OFFSET) {
+      widgets->launch_bounce_y_px = next_bounce_y;
+      app->visuals_dirty = true;
+    } else {
+      widgets->launch_bounce_y_px = next_bounce_y;
+    }
+
+    if (widgets->launch_feedback_state != BS_DOCK_LAUNCH_FEEDBACK_NONE) {
+      any_active = true;
+    }
+  }
+
+  return any_active;
+}
+
+static void
 bs_dock_app_update_dynamic_css(BsDockApp *app) {
   GString *css = NULL;
 
@@ -600,6 +804,8 @@ bs_dock_app_update_dynamic_css(BsDockApp *app) {
   css = g_string_new("");
   for (guint i = 0; i < app->ordered_item_widgets->len; i++) {
     BsDockItemWidgets *widgets = g_ptr_array_index(app->ordered_item_widgets, i);
+    double translate_y = 0.0;
+    double scale = 1.0;
 
     if (widgets == NULL
         || widgets->slot_css_name == NULL
@@ -608,6 +814,8 @@ bs_dock_app_update_dynamic_css(BsDockApp *app) {
       continue;
     }
 
+    bs_dock_app_compose_effective_visuals(widgets, &translate_y, &scale);
+
     g_string_append_printf(css,
                            "#%s { transform: translateX(%.2fpx); }\n",
                            widgets->slot_css_name,
@@ -615,11 +823,11 @@ bs_dock_app_update_dynamic_css(BsDockApp *app) {
     g_string_append_printf(css,
                            "#%s { transform: translateY(%.2fpx); }\n",
                            widgets->content_css_name,
-                           widgets->y_offset_px);
+                           translate_y);
     g_string_append_printf(css,
                            "#%s { transform: scale(%.4f); }\n",
                            widgets->button_css_name,
-                           widgets->visual_scale);
+                           scale);
   }
 
 #if GTK_CHECK_VERSION(4, 12, 0)
@@ -652,6 +860,7 @@ bs_dock_app_send_primary_action(BsDockApp *app, const BsDockItemActionData *acti
   g_autofree char *escaped_app_key = NULL;
   g_autofree char *escaped_desktop_id = NULL;
   g_autofree char *request = NULL;
+  bool launch_request = false;
 
   g_return_if_fail(app != NULL);
   if (action == NULL || !app->ipc_ready) {
@@ -682,6 +891,7 @@ bs_dock_app_send_primary_action(BsDockApp *app, const BsDockItemActionData *acti
     request = g_strdup_printf("{\"op\":\"launch_app\",\"desktop_id\":\"%s\"}",
                               escaped_desktop_id != NULL ? escaped_desktop_id : "");
     g_message("[bit_dock] request launch_app for %s", action->desktop_id);
+    launch_request = true;
   } else {
     bs_dock_app_set_status(app, "Missing desktop_id for launch");
     return;
@@ -691,6 +901,11 @@ bs_dock_app_send_primary_action(BsDockApp *app, const BsDockItemActionData *acti
     g_warning("[bit_dock] command send failed: %s",
               error != NULL ? error->message : "unknown error");
     bs_dock_app_set_status(app, error != NULL ? error->message : "Failed to send command");
+    return;
+  }
+
+  if (launch_request) {
+    bs_dock_app_begin_launch_feedback(app, action->app_key);
   }
 }
 
@@ -902,6 +1117,11 @@ bs_dock_app_create_item_widgets(BsDockApp *app, const BsDockItemView *item) {
   widgets->x_offset_px = 0.0;
   widgets->y_offset_px = 0.0;
   widgets->visual_scale = 1.0;
+  widgets->launch_feedback_state = BS_DOCK_LAUNCH_FEEDBACK_NONE;
+  widgets->launch_feedback_start_us = 0;
+  widgets->launch_feedback_settle_start_us = 0;
+  widgets->launch_settle_from_y_px = 0.0;
+  widgets->launch_bounce_y_px = 0.0;
   bs_dock_app_apply_layout(app, widgets);
   g_object_set_data(G_OBJECT(widgets->button), "bs-dock-app", app);
   g_object_set_data(G_OBJECT(widgets->button), "bs-dock-action", widgets->action);
@@ -947,6 +1167,9 @@ bs_dock_app_update_item_widgets(BsDockApp *app,
   g_return_if_fail(item != NULL);
 
   bs_dock_app_update_action_data(widgets->action, item);
+  if (item->running || item->focused) {
+    bs_dock_app_cancel_launch_feedback(app, widgets);
+  }
 
   gtk_widget_set_tooltip_text(widgets->button, item->name != NULL ? item->name : item->app_key);
   if (item->icon_name != NULL && *item->icon_name != '\0') {
@@ -1150,11 +1373,15 @@ bs_dock_app_apply_current_visuals(BsDockApp *app, bool force_dynamic_css) {
 
   for (guint i = 0; i < item_count; i++) {
     BsDockItemWidgets *widgets = g_ptr_array_index(app->ordered_item_widgets, i);
+    double translate_y = 0.0;
+    double scale = 1.0;
     double center = widgets->base_center_x + widgets->x_offset_px;
-    double half_visual = (app->metrics.item_size_px * widgets->visual_scale) * 0.5;
+
+    bs_dock_app_compose_effective_visuals(widgets, &translate_y, &scale);
+    double half_visual = (app->metrics.item_size_px * scale) * 0.5;
     double top_overflow = MAX(0.0,
-                              (-widgets->y_offset_px)
-                                + (app->metrics.item_size_px * (widgets->visual_scale - 1.0)));
+                              (-translate_y)
+                                + (app->metrics.item_size_px * (scale - 1.0)));
 
     visual_left_min = MIN(visual_left_min, center - half_visual);
     visual_right_max = MAX(visual_right_max, center + half_visual);
@@ -1187,6 +1414,7 @@ bs_dock_app_tick_cb(GtkWidget *widget, GdkFrameClock *frame_clock, gpointer user
   double alpha_lift = 0.0;
   double alpha_offset = 0.0;
   bool any_animating = false;
+  bool any_launch_animating = false;
   bool force_dynamic_css = false;
   bool dynamic_css_dirty = false;
 
@@ -1202,7 +1430,8 @@ bs_dock_app_tick_cb(GtkWidget *widget, GdkFrameClock *frame_clock, gpointer user
   app->last_frame_time_us = frame_time_us;
 
   bs_dock_app_update_targets(app);
-  force_dynamic_css = app->dynamic_css_structure_dirty;
+  any_launch_animating = bs_dock_app_update_launch_feedback(app, frame_time_us);
+  force_dynamic_css = app->dynamic_css_structure_dirty || app->visuals_dirty;
   alpha_scale = bs_dock_app_animation_alpha(dt_seconds, app->metrics.tau_scale_s);
   alpha_lift = bs_dock_app_animation_alpha(dt_seconds, app->metrics.tau_lift_s);
   alpha_offset = bs_dock_app_animation_alpha(dt_seconds, app->metrics.tau_offset_s);
@@ -1239,13 +1468,14 @@ bs_dock_app_tick_cb(GtkWidget *widget, GdkFrameClock *frame_clock, gpointer user
   }
 
   (void) bs_dock_app_apply_current_visuals(app, dynamic_css_dirty || force_dynamic_css);
-  if (!app->hover_active && !any_animating) {
+  app->visuals_dirty = false;
+  if (!app->hover_active && !any_animating && !any_launch_animating) {
     app->tick_callback_id = 0;
     app->last_frame_time_us = 0;
     return G_SOURCE_REMOVE;
   }
 
-  if (!any_animating && !force_dynamic_css) {
+  if (!any_animating && !any_launch_animating && !force_dynamic_css) {
     app->tick_callback_id = 0;
     app->last_frame_time_us = 0;
     return G_SOURCE_REMOVE;
