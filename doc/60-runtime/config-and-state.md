@@ -127,5 +127,5 @@ show_categories = true
 
 ## 当前边界
 
-- 配置读取目前只打通 I/O 路径，不具备字段级解析与校验。
+- `config.toml` 当前已支持 `shell/bar/dock/launchpad` 标量字段的读取、校验与默认值覆盖；尚未覆盖更复杂的 TOML 特性（如数组、嵌套表、内联表）。
 - `recent_apps` / `favorites` / `recent_workspaces` 仍未解析，也尚未与 launchpad 等业务状态联动。
