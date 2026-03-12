@@ -24,15 +24,13 @@ typedef struct {
   int item_border_radius_px;
   int indicator_size_px;
   int focused_indicator_size_px;
-  bool hover_range_auto;
-  double manual_hover_range_px;
+  int hover_range_max_units;
   double max_visual_scale;
   double max_hover_lift_px;
   double focused_lift_px;
   double hover_range_base_factor;
   double hover_range_span_factor;
   double hover_range_min_factor;
-  double hover_range_max_factor;
   double tau_scale_s;
   double tau_lift_s;
   double tau_offset_s;

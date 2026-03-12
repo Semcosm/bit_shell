@@ -30,15 +30,13 @@ bs_dock_metrics_init_defaults(BsDockMetrics *metrics) {
   metrics->item_border_radius_px = 16;
   metrics->indicator_size_px = 6;
   metrics->focused_indicator_size_px = 7;
-  metrics->hover_range_auto = true;
-  metrics->manual_hover_range_px = 0.0;
+  metrics->hover_range_max_units = 4;
   metrics->max_visual_scale = 1.80;
   metrics->max_hover_lift_px = 12.0;
   metrics->focused_lift_px = 2.0;
   metrics->hover_range_base_factor = 1.6;
   metrics->hover_range_span_factor = 0.12;
   metrics->hover_range_min_factor = 1.8;
-  metrics->hover_range_max_factor = 3.4;
   metrics->tau_scale_s = 0.038;
   metrics->tau_lift_s = 0.034;
   metrics->tau_offset_s = 0.036;
@@ -80,8 +78,11 @@ bs_dock_metrics_derive(BsDockMetrics *metrics, const BsDockConfig *config) {
   metrics->item_border_radius_px = MAX(12, bs_round_to_int((double) metrics->item_size_px * 0.29));
   metrics->indicator_size_px = MAX(4, bs_round_to_int((double) metrics->item_size_px * 0.11));
   metrics->focused_indicator_size_px = metrics->indicator_size_px + 1;
-  metrics->hover_range_auto = config->hover_range_auto;
-  metrics->manual_hover_range_px = config->hover_range_px > 0 ? (double) config->hover_range_px : 0.0;
+  metrics->hover_range_max_units = (int) CLAMP(config->hover_range_max > 0
+                                                 ? config->hover_range_max
+                                                 : defaults.hover_range_max,
+                                               2,
+                                               12);
   metrics->max_visual_scale = config->magnification_enabled
                                 ? CLAMP(config->magnification_scale, 1.0, 3.0)
                                 : 1.0;
@@ -115,16 +116,12 @@ bs_dock_metrics_hover_range(const BsDockMetrics *metrics, guint item_count) {
 
   g_return_val_if_fail(metrics != NULL, 0.0);
 
-  if (!metrics->hover_range_auto && metrics->manual_hover_range_px > 0.0) {
-    return metrics->manual_hover_range_px;
-  }
-
   step = bs_dock_metrics_base_step(metrics);
   dock_span = item_count > 1 ? (double) (item_count - 1) * step : 0.0;
   preferred = (metrics->hover_range_base_factor * step)
               + (metrics->hover_range_span_factor * dock_span);
   min_range = metrics->hover_range_min_factor * step;
-  max_range = metrics->hover_range_max_factor * step;
+  max_range = (double) metrics->hover_range_max_units * step;
   return CLAMP(preferred, min_range, max_range);
 }
 

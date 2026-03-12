@@ -171,8 +171,7 @@ bs_settings_service_build_config_stub(const BsShellConfig *config) {
   g_string_append_printf(content, "icon_size_px = %u\n", config->dock.icon_size_px);
   g_string_append_printf(content, "magnification_enabled = %s\n", config->dock.magnification_enabled ? "true" : "false");
   g_string_append_printf(content, "magnification_scale = %.2f\n", config->dock.magnification_scale);
-  g_string_append_printf(content, "hover_range_auto = %s\n", config->dock.hover_range_auto ? "true" : "false");
-  g_string_append_printf(content, "hover_range_px = %u\n", config->dock.hover_range_px);
+  g_string_append_printf(content, "hover_range_max = %u\n", config->dock.hover_range_max);
   g_string_append_printf(content, "spacing_px = %u\n", config->dock.spacing_px);
   g_string_append_printf(content, "bottom_margin_px = %u\n", config->dock.bottom_margin_px);
   g_string_append_printf(content, "show_running_indicator = %s\n", config->dock.show_running_indicator ? "true" : "false");

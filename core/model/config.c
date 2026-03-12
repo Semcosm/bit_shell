@@ -49,8 +49,7 @@ bs_dock_config_init_defaults(BsDockConfig *config) {
   config->icon_size_px = 56;
   config->magnification_enabled = true;
   config->magnification_scale = 1.80;
-  config->hover_range_auto = true;
-  config->hover_range_px = 0;
+  config->hover_range_max = 4;
   config->spacing_px = 0;
   config->bottom_margin_px = 14;
   config->show_running_indicator = true;
