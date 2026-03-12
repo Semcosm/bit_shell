@@ -1532,6 +1532,7 @@ bs_dock_app_apply_dock_config(BsDockApp *app, const BsDockConfig *config) {
   g_return_if_fail(config != NULL);
 
   app->config = *config;
+  bs_dock_config_normalize(&app->config);
   bs_dock_metrics_derive(&app->metrics, &app->config);
   if (app->window != NULL && gtk_layer_is_supported()) {
     gtk_layer_set_margin(app->window,

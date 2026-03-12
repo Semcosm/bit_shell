@@ -44,29 +44,18 @@ bs_dock_metrics_init_defaults(BsDockMetrics *metrics) {
 
 void
 bs_dock_metrics_derive(BsDockMetrics *metrics, const BsDockConfig *config) {
-  BsDockConfig defaults;
-  guint icon_size = 56;
-  int spacing_px = 8;
-
   g_return_if_fail(metrics != NULL);
+  g_return_if_fail(config != NULL);
 
   bs_dock_metrics_init_defaults(metrics);
-  bs_dock_config_init_defaults(&defaults);
-  if (config == NULL) {
-    config = &defaults;
-  }
-
-  icon_size = CLAMP(config->icon_size_px > 0 ? config->icon_size_px : defaults.icon_size_px, 32, 128);
-  spacing_px = config->spacing_px > 0
-                 ? (int) MIN(config->spacing_px, 64)
-                 : MAX(0, bs_round_to_int((double) icon_size * 0.14));
-
-  metrics->item_size_px = (int) icon_size;
+  metrics->item_size_px = (int) config->icon_size_px;
   metrics->slot_width_px = MAX(metrics->item_size_px + 4,
                                bs_round_to_int((double) metrics->item_size_px * 1.07));
-  metrics->items_spacing_px = spacing_px;
+  metrics->items_spacing_px = config->spacing_px > 0
+                                ? (int) config->spacing_px
+                                : MAX(0, bs_round_to_int((double) metrics->item_size_px * 0.14));
   metrics->edge_reserve_px = MAX(8, metrics->items_spacing_px);
-  metrics->bottom_margin_px = (int) (config->bottom_margin_px > 0 ? MIN(config->bottom_margin_px, 128) : defaults.bottom_margin_px);
+  metrics->bottom_margin_px = (int) config->bottom_margin_px;
   metrics->root_pad_top_px = MAX(6, bs_round_to_int((double) metrics->item_size_px * 0.18));
   metrics->root_pad_bottom_px = MAX(6, bs_round_to_int((double) metrics->item_size_px * 0.14));
   metrics->root_pad_side_px = MAX(10, bs_round_to_int((double) metrics->item_size_px * 0.25));
@@ -78,14 +67,8 @@ bs_dock_metrics_derive(BsDockMetrics *metrics, const BsDockConfig *config) {
   metrics->item_border_radius_px = MAX(12, bs_round_to_int((double) metrics->item_size_px * 0.29));
   metrics->indicator_size_px = MAX(4, bs_round_to_int((double) metrics->item_size_px * 0.11));
   metrics->focused_indicator_size_px = metrics->indicator_size_px + 1;
-  metrics->hover_range_cap_units = (int) CLAMP(config->hover_range_cap_units > 0
-                                                 ? config->hover_range_cap_units
-                                                 : defaults.hover_range_cap_units,
-                                               2,
-                                               12);
-  metrics->max_visual_scale = config->magnification_enabled
-                                ? CLAMP(config->magnification_scale, 1.0, 3.0)
-                                : 1.0;
+  metrics->hover_range_cap_units = (int) config->hover_range_cap_units;
+  metrics->max_visual_scale = config->magnification_scale;
   metrics->max_hover_lift_px = config->magnification_enabled
                                  ? (double) MAX(0, bs_round_to_int((double) metrics->item_size_px * 0.21))
                                  : 0.0;

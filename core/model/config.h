@@ -59,6 +59,7 @@ typedef struct {
 const char *bs_dock_display_mode_to_string(BsDockDisplayMode mode);
 bool bs_dock_display_mode_from_string(const char *value, BsDockDisplayMode *mode_out);
 void bs_dock_config_init_defaults(BsDockConfig *config);
+void bs_dock_config_normalize(BsDockConfig *config);
 
 void bs_runtime_paths_init(BsRuntimePaths *paths);
 void bs_runtime_paths_init_user_defaults(BsRuntimePaths *paths);

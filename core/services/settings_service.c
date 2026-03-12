@@ -287,7 +287,7 @@ bs_settings_service_parse_config(BsSettingsService *service,
 
     if (g_strcmp0(current_section, "dock") == 0) {
       if (g_strcmp0(key, "icon_size_px") == 0) {
-        if (!bs_settings_service_parse_uint32_value(value, 32, 128, &parsed.dock.icon_size_px)) {
+        if (!bs_settings_service_parse_uint32_value(value, 0, G_MAXUINT32, &parsed.dock.icon_size_px)) {
           g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid dock.icon_size_px at line %u", line_index + 1);
           goto fail;
         }
@@ -297,22 +297,22 @@ bs_settings_service_parse_config(BsSettingsService *service,
           goto fail;
         }
       } else if (g_strcmp0(key, "magnification_scale") == 0) {
-        if (!bs_settings_service_parse_double_value(value, 1.0, 3.0, &parsed.dock.magnification_scale)) {
+        if (!bs_settings_service_parse_double_value(value, -G_MAXDOUBLE, G_MAXDOUBLE, &parsed.dock.magnification_scale)) {
           g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid dock.magnification_scale at line %u", line_index + 1);
           goto fail;
         }
       } else if (g_strcmp0(key, "hover_range_cap_units") == 0) {
-        if (!bs_settings_service_parse_uint32_value(value, 2, 12, &parsed.dock.hover_range_cap_units)) {
+        if (!bs_settings_service_parse_uint32_value(value, 0, G_MAXUINT32, &parsed.dock.hover_range_cap_units)) {
           g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid dock.hover_range_cap_units at line %u", line_index + 1);
           goto fail;
         }
       } else if (g_strcmp0(key, "spacing_px") == 0) {
-        if (!bs_settings_service_parse_uint32_value(value, 0, 64, &parsed.dock.spacing_px)) {
+        if (!bs_settings_service_parse_uint32_value(value, 0, G_MAXUINT32, &parsed.dock.spacing_px)) {
           g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid dock.spacing_px at line %u", line_index + 1);
           goto fail;
         }
       } else if (g_strcmp0(key, "bottom_margin_px") == 0) {
-        if (!bs_settings_service_parse_uint32_value(value, 0, 128, &parsed.dock.bottom_margin_px)) {
+        if (!bs_settings_service_parse_uint32_value(value, 0, G_MAXUINT32, &parsed.dock.bottom_margin_px)) {
           g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "invalid dock.bottom_margin_px at line %u", line_index + 1);
           goto fail;
         }
@@ -366,6 +366,7 @@ bs_settings_service_parse_config(BsSettingsService *service,
     }
   }
 
+  bs_dock_config_normalize(&parsed.dock);
   *config_out = parsed;
   return true;
 

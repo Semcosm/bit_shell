@@ -59,6 +59,21 @@ bs_dock_config_init_defaults(BsDockConfig *config) {
 }
 
 void
+bs_dock_config_normalize(BsDockConfig *config) {
+  g_return_if_fail(config != NULL);
+
+  config->icon_size_px = CLAMP(config->icon_size_px, 32, 128);
+  config->magnification_scale = CLAMP(config->magnification_scale, 1.0, 3.0);
+  config->hover_range_cap_units = CLAMP(config->hover_range_cap_units, 2, 12);
+  config->spacing_px = MIN(config->spacing_px, 64);
+  config->bottom_margin_px = MIN(config->bottom_margin_px, 128);
+
+  if (!config->magnification_enabled) {
+    config->magnification_scale = 1.0;
+  }
+}
+
+void
 bs_runtime_paths_init(BsRuntimePaths *paths) {
   g_return_if_fail(paths != NULL);
   memset(paths, 0, sizeof(*paths));
