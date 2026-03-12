@@ -18,7 +18,7 @@
 - 前端只负责渲染与交互，不持有权威业务状态
 - Dock 几何与动画参数在前端运行时派生，不写入磁盘
 
-更完整的总体架构见 [system-architecture.md](/home/cestlavie/bit_shell/doc/10-architecture/system-architecture.md)。
+更完整的总体架构见 [system-architecture.md](doc/10-architecture/system-architecture.md)。
 
 ## 仓库结构
 
@@ -39,7 +39,7 @@ bit_shell/
 └─ build/            # Meson 构建产物
 ```
 
-文档目录导航见 [doc/README.md](/home/cestlavie/bit_shell/doc/README.md)。
+文档目录导航见 [doc/README.md](doc/README.md)。
 
 ## 已实现内容
 
@@ -61,7 +61,7 @@ bit_shell/
 - 动态 CSS 合成
 - 启动 bounce 作为独立瞬态分量，不进入 hover 几何求解器
 
-具体见 [bit_dock.md](/home/cestlavie/bit_shell/doc/20-components/bit_dock.md)。
+具体见 [bit_dock.md](doc/20-components/bit_dock.md)。
 
 ## 构建与运行
 
@@ -91,8 +91,8 @@ meson compile -C build
 
 仓库里也提供了辅助脚本：
 
-- [start_bit_shelld.sh](/home/cestlavie/bit_shell/scripts/startup/start_bit_shelld.sh)
-- [start_bit_dock.sh](/home/cestlavie/bit_shell/scripts/startup/start_bit_dock.sh)
+- [start_bit_shelld.sh](scripts/startup/start_bit_shelld.sh)
+- [start_bit_dock.sh](scripts/startup/start_bit_dock.sh)
 
 测试命令：
 
@@ -124,7 +124,7 @@ Dock 当前公开的持久化配置包括：
 - `display_mode`
 - `center_on_primary_output`
 
-配置模型与持久化边界见 [config-and-state.md](/home/cestlavie/bit_shell/doc/60-runtime/config-and-state.md)。
+配置模型与持久化边界见 [config-and-state.md](doc/60-runtime/config-and-state.md)。
 
 ## IPC 与状态流
 
@@ -142,19 +142,19 @@ Dock 当前公开的持久化配置包括：
 
 协议与事件模型见：
 
-- [event-and-state-flow.md](/home/cestlavie/bit_shell/doc/10-architecture/event-and-state-flow.md)
-- [ipc-contract.md](/home/cestlavie/bit_shell/doc/10-architecture/ipc-contract.md)
+- [event-and-state-flow.md](doc/10-architecture/event-and-state-flow.md)
+- [ipc-contract.md](doc/10-architecture/ipc-contract.md)
 
 ## 文档阅读顺序
 
 如果第一次看这个仓库，建议按这个顺序：
 
-1. [project-scope.md](/home/cestlavie/bit_shell/doc/00-overview/project-scope.md)
-2. [system-architecture.md](/home/cestlavie/bit_shell/doc/10-architecture/system-architecture.md)
-3. [event-and-state-flow.md](/home/cestlavie/bit_shell/doc/10-architecture/event-and-state-flow.md)
-4. [ipc-contract.md](/home/cestlavie/bit_shell/doc/10-architecture/ipc-contract.md)
-5. [bit_dock.md](/home/cestlavie/bit_shell/doc/20-components/bit_dock.md)
-6. [config-and-state.md](/home/cestlavie/bit_shell/doc/60-runtime/config-and-state.md)
+1. [project-scope.md](doc/00-overview/project-scope.md)
+2. [system-architecture.md](doc/10-architecture/system-architecture.md)
+3. [event-and-state-flow.md](doc/10-architecture/event-and-state-flow.md)
+4. [ipc-contract.md](doc/10-architecture/ipc-contract.md)
+5. [bit_dock.md](doc/20-components/bit_dock.md)
+6. [config-and-state.md](doc/60-runtime/config-and-state.md)
 
 ## 当前状态
 
