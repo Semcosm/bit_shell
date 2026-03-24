@@ -76,6 +76,8 @@
 - `flush_state()` 会按当前内存状态重写 `state.json`，其中 `pinned_apps` 为真实内容，其余列表仍是占位结构。
 - `reload_config()` 只读取 `config.toml`，不会导入 `state.json`；第一版仅 `dock.*` 支持热更新，其余字段会记录为需要重启后端后生效。
 - `import_state()` 保留“显式导入运行时状态”语义，不参与自动配置热更新。
+- 当前 daemon 会监控 `config.toml` 所在目录，并对目标文件变化做 debounce 后自动触发 `reload_config()`。
+- `state.json` 的变化不会触发自动 reload。
 
 ## 当前 stub 文件形态
 

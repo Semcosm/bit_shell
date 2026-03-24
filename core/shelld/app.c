@@ -2,6 +2,8 @@
 
 #include <glib.h>
 
+#include "shelld/config_watcher.h"
+
 #define BS_WINDOW_CYCLE_CONTEXT_TIMEOUT_US (3 * G_TIME_SPAN_SECOND)
 
 struct _BsShelldApp {
@@ -15,6 +17,7 @@ struct _BsShelldApp {
   BsLauncherService *launcher_service;
   BsTrayService *tray_service;
   BsSettingsService *settings_service;
+  BsConfigWatcher *config_watcher;
   BsCommandRouter *command_router;
   BsIpcServer *ipc_server;
   bool running;
@@ -46,6 +49,9 @@ static bool bs_shelld_app_set_app_pinned(BsShelldApp *app,
                                          const char *app_key,
                                          bool pinned,
                                          GError **error);
+static bool bs_shelld_app_reload_settings_from_watcher(gpointer user_data,
+                                                       BsSettingsReloadResult *result,
+                                                       GError **error);
 
 BsShelldApp *
 bs_shelld_app_new(const BsShelldConfig *config) {
@@ -54,6 +60,7 @@ bs_shelld_app_new(const BsShelldConfig *config) {
   BsAppRegistryConfig app_registry_config = {0};
   BsTrayServiceConfig tray_config = {0};
   BsSettingsServiceConfig settings_config = {0};
+  BsConfigWatcherConfig watcher_config = {0};
   BsIpcServerConfig ipc_config = {0};
 
   bs_shell_config_init_defaults(&app->config);
@@ -87,6 +94,13 @@ bs_shelld_app_new(const BsShelldConfig *config) {
   settings_config.state_path = app->config.paths.state_path;
   app->settings_service = bs_settings_service_new(app->state_store, &settings_config);
 
+  watcher_config.config_path = app->config.paths.config_path;
+  watcher_config.main_context = g_main_loop_get_context(app->main_loop);
+  watcher_config.debounce_ms = 200;
+  watcher_config.reload_func = bs_shelld_app_reload_settings_from_watcher;
+  watcher_config.reload_user_data = app;
+  app->config_watcher = bs_config_watcher_new(&watcher_config);
+
   app->command_router = bs_command_router_new(app);
 
   ipc_config.socket_path = app->config.paths.ipc_socket_path;
@@ -104,6 +118,7 @@ bs_shelld_app_free(BsShelldApp *app) {
   bs_shelld_app_stop(app);
   bs_ipc_server_free(app->ipc_server);
   bs_command_router_free(app->command_router);
+  bs_config_watcher_free(app->config_watcher);
   bs_settings_service_free(app->settings_service);
   bs_tray_service_free(app->tray_service);
   bs_launcher_service_free(app->launcher_service);
@@ -125,6 +140,7 @@ bs_shelld_app_free(BsShelldApp *app) {
 bool
 bs_shelld_app_start(BsShelldApp *app, GError **error) {
   g_autoptr(GError) niri_error = NULL;
+  g_autoptr(GError) watcher_error = NULL;
 
   g_return_val_if_fail(app != NULL, false);
 
@@ -164,6 +180,10 @@ bs_shelld_app_start(BsShelldApp *app, GError **error) {
   if (niri_error != NULL) {
     g_warning("[bit_shelld] started with degraded niri backend: %s", niri_error->message);
   }
+  if (app->config_watcher != NULL && !bs_config_watcher_start(app->config_watcher, &watcher_error)) {
+    g_warning("[bit_shelld] config watcher disabled: %s",
+              watcher_error != NULL ? watcher_error->message : "unknown error");
+  }
 
   app->running = true;
   return true;
@@ -175,6 +195,9 @@ bs_shelld_app_stop(BsShelldApp *app) {
     return;
   }
 
+  if (app->config_watcher != NULL) {
+    bs_config_watcher_stop(app->config_watcher);
+  }
   bs_ipc_server_stop(app->ipc_server);
   bs_tray_service_stop(app->tray_service);
   bs_niri_backend_stop(app->niri_backend);
@@ -215,6 +238,13 @@ bs_shelld_app_reload_settings(BsShelldApp *app,
             result->hot_applied ? "true" : "false",
             result->restart_required_keys != NULL ? result->restart_required_keys->len : 0);
   return true;
+}
+
+static bool
+bs_shelld_app_reload_settings_from_watcher(gpointer user_data,
+                                           BsSettingsReloadResult *result,
+                                           GError **error) {
+  return bs_shelld_app_reload_settings(user_data, result, error);
 }
 
 BsStateStore *

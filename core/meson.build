@@ -22,6 +22,7 @@ bit_shelld_sources = files(
   'model/snapshot.c',
   'shelld/main.c',
   'shelld/app.c',
+  'shelld/config_watcher.c',
   'shelld/command_router.c',
   'shelld/ipc_server.c',
   'niri/niri_backend.c',

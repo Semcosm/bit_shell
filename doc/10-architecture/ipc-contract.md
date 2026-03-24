@@ -196,6 +196,7 @@ topic 与 `BsTopic` 一致：
 - 当前仅 `dock.*` 走热更新并通过 `settings` topic 推送给前端
 - `shell.auto_reconnect_niri`、`shell.tray_watcher_name`、`shell.primary_output` 当前会报告为需要重启后端
 - `bar.*`、`launchpad.*` 当前尚无运行时消费者，因此只会出现在 `restart_required`
+- 自动配置 watcher 只是对该命令的触发补充，不替代手动 `reload_settings` IPC 入口
 
 ## 订阅请求
 
