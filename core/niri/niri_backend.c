@@ -51,6 +51,7 @@ struct _BsNiriBackend {
 
 static const char *bs_niri_backend_resolve_socket_path(BsNiriBackend *backend);
 static void bs_niri_backend_close_event_connection(BsNiriBackend *backend);
+static void bs_niri_backend_cancel_reconnect(BsNiriBackend *backend);
 static void bs_niri_backend_schedule_reconnect(BsNiriBackend *backend);
 static gboolean bs_niri_backend_reconnect_cb(gpointer user_data);
 static bool bs_niri_backend_connect_stream(BsNiriBackend *backend, GError **error);
@@ -143,6 +144,16 @@ bs_niri_backend_close_event_connection(BsNiriBackend *backend) {
   if (backend->event_connection != NULL) {
     g_io_stream_close(G_IO_STREAM(backend->event_connection), NULL, NULL);
     g_clear_object(&backend->event_connection);
+  }
+}
+
+static void
+bs_niri_backend_cancel_reconnect(BsNiriBackend *backend) {
+  g_return_if_fail(backend != NULL);
+
+  if (backend->reconnect_source_id != 0) {
+    g_source_remove(backend->reconnect_source_id);
+    backend->reconnect_source_id = 0;
   }
 }
 
@@ -970,11 +981,41 @@ bs_niri_backend_stop(BsNiriBackend *backend) {
   }
 
   backend->running = false;
-  if (backend->reconnect_source_id != 0) {
-    g_source_remove(backend->reconnect_source_id);
-    backend->reconnect_source_id = 0;
-  }
+  bs_niri_backend_cancel_reconnect(backend);
   bs_niri_backend_close_event_connection(backend);
+}
+
+bool
+bs_niri_backend_set_auto_reconnect(BsNiriBackend *backend,
+                                   bool enabled,
+                                   GError **error) {
+  (void) error;
+
+  g_return_val_if_fail(backend != NULL, false);
+
+  if (backend->auto_reconnect == enabled) {
+    return true;
+  }
+
+  backend->auto_reconnect = enabled;
+  if (!enabled) {
+    bs_niri_backend_cancel_reconnect(backend);
+    return true;
+  }
+
+  if (backend->running
+      && backend->event_connection == NULL
+      && backend->reconnect_source_id == 0) {
+    bs_niri_backend_schedule_reconnect(backend);
+  }
+
+  return true;
+}
+
+bool
+bs_niri_backend_auto_reconnect(const BsNiriBackend *backend) {
+  g_return_val_if_fail(backend != NULL, false);
+  return backend->auto_reconnect;
 }
 
 bool

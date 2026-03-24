@@ -49,6 +49,7 @@ static bool bs_shelld_app_set_app_pinned(BsShelldApp *app,
                                          const char *app_key,
                                          bool pinned,
                                          GError **error);
+static bool bs_shelld_app_ptr_array_remove_string(GPtrArray *values, const char *value);
 static bool bs_shelld_app_reload_settings_from_watcher(gpointer user_data,
                                                        BsSettingsReloadResult *result,
                                                        GError **error);
@@ -230,6 +231,24 @@ bs_shelld_app_reload_settings(BsShelldApp *app,
   if (!bs_settings_service_reload_config(app->settings_service, result, error)) {
     return false;
   }
+
+  if ((result->changed & BS_SETTINGS_RELOAD_AUTO_RECONNECT_NIRI_CHANGED) != 0) {
+    const BsShellConfig *effective_config = bs_settings_service_shell_config(app->settings_service);
+
+    if (!bs_niri_backend_set_auto_reconnect(app->niri_backend,
+                                            effective_config->auto_reconnect_niri,
+                                            error)) {
+      return false;
+    }
+
+    (void) bs_shelld_app_ptr_array_remove_string(result->restart_required_keys,
+                                                 "shell.auto_reconnect_niri");
+    if (result->hot_applied_keys != NULL) {
+      g_ptr_array_add(result->hot_applied_keys, g_strdup("shell.auto_reconnect_niri"));
+    }
+    result->hot_applied = true;
+  }
+
   bs_shell_config_clear(&app->config);
   bs_shell_config_copy(&app->config, bs_settings_service_shell_config(app->settings_service));
 
@@ -238,6 +257,28 @@ bs_shelld_app_reload_settings(BsShelldApp *app,
             result->hot_applied ? "true" : "false",
             result->restart_required_keys != NULL ? result->restart_required_keys->len : 0);
   return true;
+}
+
+static bool
+bs_shelld_app_ptr_array_remove_string(GPtrArray *values, const char *value) {
+  guint index = 0;
+
+  if (values == NULL || value == NULL) {
+    return false;
+  }
+
+  for (index = 0; index < values->len; index++) {
+    const char *existing = g_ptr_array_index(values, index);
+
+    if (g_strcmp0(existing, value) != 0) {
+      continue;
+    }
+
+    g_ptr_array_remove_index(values, index);
+    return true;
+  }
+
+  return false;
 }
 
 static bool
