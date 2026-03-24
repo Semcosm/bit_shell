@@ -65,15 +65,17 @@
 
 ## 当前 core 落地状态
 
-- `BsSettingsService.load()` 会确保 `config.toml` 与 `state.json` 的父目录存在（使用 `0700` 创建）。
+- `BsSettingsService.load_all()` 会确保 `config.toml` 与 `state.json` 的父目录存在（使用 `0700` 创建）。
 - 若文件缺失，core 会写入一份 stub 文件。
-- `load()` 当前会解析 `config.toml` 中的 `shell/bar/dock/launchpad` 标量字段；其中 Dock 走 `parse -> normalize -> derive` 链路：解析层只做文本到字段的读取与类型/枚举校验，`BsDockConfig` 在进入前端前统一归一化，几何与动画参数仍由运行时派生。
+- `load_all()` 当前会解析 `config.toml` 中的 `shell/bar/dock/launchpad` 标量字段，并在启动时导入 `state.json`；其中 Dock 走 `parse -> normalize -> derive` 链路：解析层只做文本到字段的读取与类型/枚举校验，`BsDockConfig` 在进入前端前统一归一化，几何与动画参数仍由运行时派生。
 - `dock` 配置当前只持久化 `BsDockConfig`；Dock 几何与动画参数由前端在运行时派生为 `BsDockMetrics`，不会写入磁盘。
 - `hover_range_cap_units` 的语义是“自动 hover 半径的图标步长上限”，最终半径仍按前端自动算法计算，并以该上限封顶。
 - `animate_opening_apps` 当前已在 `bit_dock` 前端生效：未运行应用在 `launch_app` 发送成功后会触发启动 bounce，进入 `running/focused` 后允许提前结束，但会先平顺收尾到静止位。
 - `pinned_apps` 当前已驱动 `DockService` 的 pinned + running 聚合。
-- `pin_app` / `unpin_app` 命令当前会立即触发一次 `flush()`。
-- `flush()` 会按当前内存状态重写 `state.json`，其中 `pinned_apps` 为真实内容，其余列表仍是占位结构。
+- `pin_app` / `unpin_app` 命令当前会立即触发一次 `flush_state()`。
+- `flush_state()` 会按当前内存状态重写 `state.json`，其中 `pinned_apps` 为真实内容，其余列表仍是占位结构。
+- `reload_config()` 只读取 `config.toml`，不会导入 `state.json`；第一版仅 `dock.*` 支持热更新，其余字段会记录为需要重启后端后生效。
+- `import_state()` 保留“显式导入运行时状态”语义，不参与自动配置热更新。
 
 ## 当前 stub 文件形态
 
@@ -132,5 +134,8 @@ show_categories = true
 ## 当前边界
 
 - `config.toml` 当前已支持 `shell/bar/dock/launchpad` 标量字段的读取、类型/枚举校验与默认值覆盖；其中 Dock 配置会进一步经过统一的 `BsDockConfig` 归一化，再由前端派生为 `BsDockMetrics`。
+- 运行时 `reload_config()` 当前只对 `dock.*` 走 `StateStore -> IPC event -> frontend` 热更新通路。
+- `shell.auto_reconnect_niri`、`shell.tray_watcher_name`、`shell.primary_output` 当前虽可被解析并纳入 reload diff，但仍需要重启后端后完全生效。
+- `bar.*` 与 `launchpad.*` 当前尚无运行时消费者。
 - `config.toml` 尚未覆盖更复杂的 TOML 特性（如数组、嵌套表、内联表）。
 - `recent_apps` / `favorites` / `recent_workspaces` 仍未解析，也尚未与 launchpad 等业务状态联动。

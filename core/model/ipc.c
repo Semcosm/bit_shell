@@ -27,6 +27,7 @@ static const BsNameMap bs_command_names[] = {
   {"focus_window", BS_COMMAND_FOCUS_WINDOW},
   {"switch_workspace", BS_COMMAND_SWITCH_WORKSPACE},
   {"toggle_launchpad", BS_COMMAND_TOGGLE_LAUNCHPAD},
+  {"reload_settings", BS_COMMAND_RELOAD_SETTINGS},
   {"pin_app", BS_COMMAND_PIN_APP},
   {"unpin_app", BS_COMMAND_UNPIN_APP},
   {"tray_activate", BS_COMMAND_TRAY_ACTIVATE},

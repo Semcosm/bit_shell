@@ -30,6 +30,19 @@ static bool bs_settings_service_parse_config(BsSettingsService *service,
                                             const char *contents,
                                             BsShellConfig *config_out,
                                             GError **error);
+static bool bs_settings_service_ensure_storage_paths(BsSettingsService *service, GError **error);
+static bool bs_settings_service_ensure_stub_files(BsSettingsService *service, GError **error);
+static bool bs_settings_service_read_config_text(BsSettingsService *service,
+                                                 char **config_contents_out,
+                                                 GError **error);
+static bool bs_settings_service_read_state_text(BsSettingsService *service,
+                                                char **state_contents_out,
+                                                GError **error);
+static bool bs_settings_service_apply_dock_to_store(BsSettingsService *service,
+                                                    const BsDockConfig *dock_config);
+static BsSettingsReloadFlags bs_settings_service_diff_config(const BsShellConfig *current,
+                                                            const BsShellConfig *next);
+static void bs_settings_service_append_key(GPtrArray *values, const char *key);
 
 static bool
 bs_settings_service_ensure_parent_dir(const char *path, GError **error) {
@@ -50,6 +63,20 @@ bs_settings_service_ensure_parent_dir(const char *path, GError **error) {
                 g_file_error_from_errno(errno),
                 "failed to create parent directory for %s",
                 path);
+    return false;
+  }
+
+  return true;
+}
+
+static bool
+bs_settings_service_ensure_storage_paths(BsSettingsService *service, GError **error) {
+  g_return_val_if_fail(service != NULL, false);
+
+  if (!bs_settings_service_ensure_parent_dir(service->config_path, error)) {
+    return false;
+  }
+  if (!bs_settings_service_ensure_parent_dir(service->state_path, error)) {
     return false;
   }
 
@@ -563,6 +590,104 @@ bs_settings_service_ensure_stub_file(const char *path,
   return g_file_set_contents(path, contents, -1, error);
 }
 
+static bool
+bs_settings_service_ensure_stub_files(BsSettingsService *service, GError **error) {
+  g_autofree char *config_stub = NULL;
+  g_autofree char *state_stub = NULL;
+
+  g_return_val_if_fail(service != NULL, false);
+
+  config_stub = bs_settings_service_build_config_stub(&service->shell_config);
+  state_stub = bs_settings_service_build_state_stub(service);
+
+  if (!bs_settings_service_ensure_stub_file(service->config_path, config_stub, error)) {
+    return false;
+  }
+  if (!bs_settings_service_ensure_stub_file(service->state_path, state_stub, error)) {
+    return false;
+  }
+
+  return true;
+}
+
+static bool
+bs_settings_service_read_config_text(BsSettingsService *service,
+                                     char **config_contents_out,
+                                     GError **error) {
+  g_return_val_if_fail(service != NULL, false);
+  g_return_val_if_fail(config_contents_out != NULL, false);
+
+  *config_contents_out = NULL;
+  if (service->config_path == NULL) {
+    return true;
+  }
+
+  return g_file_get_contents(service->config_path, config_contents_out, NULL, error);
+}
+
+static bool
+bs_settings_service_read_state_text(BsSettingsService *service,
+                                    char **state_contents_out,
+                                    GError **error) {
+  g_return_val_if_fail(service != NULL, false);
+  g_return_val_if_fail(state_contents_out != NULL, false);
+
+  *state_contents_out = NULL;
+  if (service->state_path == NULL) {
+    return true;
+  }
+
+  return g_file_get_contents(service->state_path, state_contents_out, NULL, error);
+}
+
+static bool
+bs_settings_service_apply_dock_to_store(BsSettingsService *service, const BsDockConfig *dock_config) {
+  g_return_val_if_fail(service != NULL, false);
+  g_return_val_if_fail(dock_config != NULL, false);
+
+  bs_state_store_begin_update(service->store);
+  bs_state_store_replace_dock_config(service->store, dock_config);
+  bs_state_store_finish_update(service->store);
+  return true;
+}
+
+static BsSettingsReloadFlags
+bs_settings_service_diff_config(const BsShellConfig *current, const BsShellConfig *next) {
+  BsSettingsReloadFlags flags = BS_SETTINGS_RELOAD_NONE;
+
+  g_return_val_if_fail(current != NULL, BS_SETTINGS_RELOAD_NONE);
+  g_return_val_if_fail(next != NULL, BS_SETTINGS_RELOAD_NONE);
+
+  if (memcmp(&current->dock, &next->dock, sizeof(current->dock)) != 0) {
+    flags |= BS_SETTINGS_RELOAD_DOCK_CHANGED;
+  }
+  if (current->auto_reconnect_niri != next->auto_reconnect_niri) {
+    flags |= BS_SETTINGS_RELOAD_AUTO_RECONNECT_NIRI_CHANGED;
+  }
+  if (g_strcmp0(current->tray_watcher_name, next->tray_watcher_name) != 0) {
+    flags |= BS_SETTINGS_RELOAD_TRAY_WATCHER_CHANGED;
+  }
+  if (g_strcmp0(current->primary_output, next->primary_output) != 0) {
+    flags |= BS_SETTINGS_RELOAD_PRIMARY_OUTPUT_CHANGED;
+  }
+  if (memcmp(&current->bar, &next->bar, sizeof(current->bar)) != 0) {
+    flags |= BS_SETTINGS_RELOAD_BAR_CHANGED;
+  }
+  if (memcmp(&current->launchpad, &next->launchpad, sizeof(current->launchpad)) != 0) {
+    flags |= BS_SETTINGS_RELOAD_LAUNCHPAD_CHANGED;
+  }
+
+  return flags;
+}
+
+static void
+bs_settings_service_append_key(GPtrArray *values, const char *key) {
+  g_return_if_fail(values != NULL);
+  g_return_if_fail(key != NULL);
+
+  g_ptr_array_add(values, g_strdup(key));
+}
+
 BsSettingsService *
 bs_settings_service_new(BsStateStore *store, const BsSettingsServiceConfig *config) {
   BsSettingsService *service = g_new0(BsSettingsService, 1);
@@ -582,6 +707,26 @@ bs_settings_service_new(BsStateStore *store, const BsSettingsServiceConfig *conf
 }
 
 void
+bs_settings_reload_result_init(BsSettingsReloadResult *result) {
+  g_return_if_fail(result != NULL);
+
+  memset(result, 0, sizeof(*result));
+  result->hot_applied_keys = g_ptr_array_new_with_free_func(g_free);
+  result->restart_required_keys = g_ptr_array_new_with_free_func(g_free);
+}
+
+void
+bs_settings_reload_result_clear(BsSettingsReloadResult *result) {
+  if (result == NULL) {
+    return;
+  }
+
+  g_clear_pointer(&result->hot_applied_keys, g_ptr_array_unref);
+  g_clear_pointer(&result->restart_required_keys, g_ptr_array_unref);
+  memset(result, 0, sizeof(*result));
+}
+
+void
 bs_settings_service_free(BsSettingsService *service) {
   if (service == NULL) {
     return;
@@ -594,39 +739,81 @@ bs_settings_service_free(BsSettingsService *service) {
 }
 
 bool
-bs_settings_service_load(BsSettingsService *service, GError **error) {
-  g_autofree char *config_stub = NULL;
-  g_autofree char *state_stub = NULL;
+bs_settings_service_load_all(BsSettingsService *service, GError **error) {
   g_autofree char *config_contents = NULL;
-  g_autofree char *state_contents = NULL;
-  BsShellConfig parsed_config;
+  BsShellConfig parsed_config = {0};
 
   g_return_val_if_fail(service != NULL, false);
 
-  config_stub = bs_settings_service_build_config_stub(&service->shell_config);
-  state_stub = bs_settings_service_build_state_stub(service);
-
-  if (!bs_settings_service_ensure_stub_file(service->config_path, config_stub, error)) {
+  if (!bs_settings_service_ensure_storage_paths(service, error)) {
     return false;
   }
-  if (!bs_settings_service_ensure_stub_file(service->state_path, state_stub, error)) {
+  if (!bs_settings_service_ensure_stub_files(service, error)) {
     return false;
   }
-
-  if (service->config_path != NULL) {
-    (void) g_file_get_contents(service->config_path, &config_contents, NULL, NULL);
+  if (!bs_settings_service_read_config_text(service, &config_contents, error)) {
+    return false;
   }
-  if (service->state_path != NULL) {
-    (void) g_file_get_contents(service->state_path, &state_contents, NULL, NULL);
-  }
-
   if (!bs_settings_service_parse_config(service, config_contents, &parsed_config, error)) {
     return false;
   }
 
-  if (!bs_settings_service_parse_state(service, &parsed_config.dock, state_contents, error)) {
+  bs_shell_config_clear(&service->shell_config);
+  service->shell_config = parsed_config;
+
+  if (!bs_settings_service_import_state(service, error)) {
+    return false;
+  }
+
+  return true;
+}
+
+bool
+bs_settings_service_reload_config(BsSettingsService *service,
+                                  BsSettingsReloadResult *out,
+                                  GError **error) {
+  g_autofree char *config_contents = NULL;
+  BsShellConfig parsed_config = {0};
+  BsSettingsReloadFlags changed = BS_SETTINGS_RELOAD_NONE;
+
+  g_return_val_if_fail(service != NULL, false);
+  g_return_val_if_fail(out != NULL, false);
+
+  if (!bs_settings_service_read_config_text(service, &config_contents, error)) {
+    return false;
+  }
+  if (!bs_settings_service_parse_config(service, config_contents, &parsed_config, error)) {
+    return false;
+  }
+
+  changed = bs_settings_service_diff_config(&service->shell_config, &parsed_config);
+  out->changed = changed;
+  out->config_loaded = true;
+
+  if ((changed & BS_SETTINGS_RELOAD_DOCK_CHANGED) != 0
+      && !bs_settings_service_apply_dock_to_store(service, &parsed_config.dock)) {
     bs_shell_config_clear(&parsed_config);
     return false;
+  }
+
+  if ((changed & BS_SETTINGS_RELOAD_DOCK_CHANGED) != 0) {
+    out->hot_applied = true;
+    bs_settings_service_append_key(out->hot_applied_keys, "dock.*");
+  }
+  if ((changed & BS_SETTINGS_RELOAD_AUTO_RECONNECT_NIRI_CHANGED) != 0) {
+    bs_settings_service_append_key(out->restart_required_keys, "shell.auto_reconnect_niri");
+  }
+  if ((changed & BS_SETTINGS_RELOAD_TRAY_WATCHER_CHANGED) != 0) {
+    bs_settings_service_append_key(out->restart_required_keys, "shell.tray_watcher_name");
+  }
+  if ((changed & BS_SETTINGS_RELOAD_PRIMARY_OUTPUT_CHANGED) != 0) {
+    bs_settings_service_append_key(out->restart_required_keys, "shell.primary_output");
+  }
+  if ((changed & BS_SETTINGS_RELOAD_BAR_CHANGED) != 0) {
+    bs_settings_service_append_key(out->restart_required_keys, "bar.*");
+  }
+  if ((changed & BS_SETTINGS_RELOAD_LAUNCHPAD_CHANGED) != 0) {
+    bs_settings_service_append_key(out->restart_required_keys, "launchpad.*");
   }
 
   bs_shell_config_clear(&service->shell_config);
@@ -635,7 +822,20 @@ bs_settings_service_load(BsSettingsService *service, GError **error) {
 }
 
 bool
-bs_settings_service_flush(BsSettingsService *service, GError **error) {
+bs_settings_service_import_state(BsSettingsService *service, GError **error) {
+  g_autofree char *state_contents = NULL;
+
+  g_return_val_if_fail(service != NULL, false);
+
+  if (!bs_settings_service_read_state_text(service, &state_contents, error)) {
+    return false;
+  }
+
+  return bs_settings_service_parse_state(service, &service->shell_config.dock, state_contents, error);
+}
+
+bool
+bs_settings_service_flush_state(BsSettingsService *service, GError **error) {
   g_autofree char *state_stub = NULL;
 
   g_return_val_if_fail(service != NULL, false);

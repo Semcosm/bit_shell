@@ -47,6 +47,7 @@ topic 与 `BsTopic` 一致：
 - `focus_window`
 - `switch_workspace`
 - `toggle_launchpad`
+- `reload_settings`
 - `pin_app`
 - `unpin_app`
 - `tray_activate`
@@ -169,6 +170,33 @@ topic 与 `BsTopic` 一致：
 }
 ```
 
+## 配置重载请求
+
+```json
+{ "op": "reload_settings" }
+```
+
+成功响应示例：
+
+```json
+{
+  "ok": true,
+  "kind": "reloaded",
+  "command": "reload_settings",
+  "changed": ["dock.*", "shell.auto_reconnect_niri"],
+  "hot_applied": ["dock.*"],
+  "restart_required": ["shell.auto_reconnect_niri"],
+  "config_loaded": true
+}
+```
+
+说明：
+
+- 第一版 `reload_settings` 只对 `config.toml` 生效，不会导入 `state.json`
+- 当前仅 `dock.*` 走热更新并通过 `settings` topic 推送给前端
+- `shell.auto_reconnect_niri`、`shell.tray_watcher_name`、`shell.primary_output` 当前会报告为需要重启后端
+- `bar.*`、`launchpad.*` 当前尚无运行时消费者，因此只会出现在 `restart_required`
+
 ## 订阅请求
 
 ```json
@@ -244,5 +272,6 @@ topic 与 `BsTopic` 一致：
 - `subscribe` 已在 IPC server 内维持客户端订阅集合，并在 `StateStore` topic 变化时向对应客户端推送 `event`
 - `StateStore` 支持批量更新事务（begin/finish），可在一次提交中原子推进多 topic 版本
 - `switch_workspace`、`focus_window`、`activate_app`、`focus_next_app_window`、`focus_prev_app_window`、`launch_app`、`pin_app`、`unpin_app` 已接入真实执行链路
+- `reload_settings` 已接入真实执行链路，并返回“已热应用 / 需重启”的结构化结果
 - `pin_app` / `unpin_app` 当前会更新内存状态并立即 flush 到 `state.json`
 - 其余命令当前仍以 `ack + params + todo` 形式回包

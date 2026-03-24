@@ -10,6 +10,9 @@ struct _BsCommandRouter {
   BsShelldApp *app;
 };
 
+static char *bs_command_router_string_array_json(GPtrArray *values);
+static char *bs_command_router_build_reload_settings_json(const BsSettingsReloadResult *result);
+
 static bool
 bs_json_extract_string_field(const char *payload,
                              const char *key,
@@ -226,6 +229,69 @@ bs_command_router_build_ack_json(const BsCommandRequest *request, bool routed) {
                          params_json);
 }
 
+static char *
+bs_command_router_string_array_json(GPtrArray *values) {
+  GString *json = g_string_new("[");
+
+  if (values != NULL) {
+    for (guint i = 0; i < values->len; i++) {
+      const char *value = g_ptr_array_index(values, i);
+      g_autofree char *escaped = NULL;
+
+      if (i > 0) {
+        g_string_append(json, ",");
+      }
+
+      escaped = g_strescape(value != NULL ? value : "", NULL);
+      g_string_append_printf(json, "\"%s\"", escaped != NULL ? escaped : "");
+    }
+  }
+
+  g_string_append(json, "]");
+  return g_string_free(json, false);
+}
+
+static char *
+bs_command_router_build_reload_settings_json(const BsSettingsReloadResult *result) {
+  g_autofree char *changed_json = NULL;
+  g_autofree char *hot_applied_json = NULL;
+  g_autofree char *restart_required_json = NULL;
+  g_autoptr(GPtrArray) changed_keys = NULL;
+
+  g_return_val_if_fail(result != NULL, NULL);
+
+  changed_keys = g_ptr_array_new_with_free_func(g_free);
+
+  if ((result->changed & BS_SETTINGS_RELOAD_DOCK_CHANGED) != 0) {
+    g_ptr_array_add(changed_keys, g_strdup("dock.*"));
+  }
+  if ((result->changed & BS_SETTINGS_RELOAD_AUTO_RECONNECT_NIRI_CHANGED) != 0) {
+    g_ptr_array_add(changed_keys, g_strdup("shell.auto_reconnect_niri"));
+  }
+  if ((result->changed & BS_SETTINGS_RELOAD_TRAY_WATCHER_CHANGED) != 0) {
+    g_ptr_array_add(changed_keys, g_strdup("shell.tray_watcher_name"));
+  }
+  if ((result->changed & BS_SETTINGS_RELOAD_PRIMARY_OUTPUT_CHANGED) != 0) {
+    g_ptr_array_add(changed_keys, g_strdup("shell.primary_output"));
+  }
+  if ((result->changed & BS_SETTINGS_RELOAD_BAR_CHANGED) != 0) {
+    g_ptr_array_add(changed_keys, g_strdup("bar.*"));
+  }
+  if ((result->changed & BS_SETTINGS_RELOAD_LAUNCHPAD_CHANGED) != 0) {
+    g_ptr_array_add(changed_keys, g_strdup("launchpad.*"));
+  }
+
+  changed_json = bs_command_router_string_array_json(changed_keys);
+  hot_applied_json = bs_command_router_string_array_json(result->hot_applied_keys);
+  restart_required_json = bs_command_router_string_array_json(result->restart_required_keys);
+
+  return g_strdup_printf("{\"ok\":true,\"kind\":\"reloaded\",\"command\":\"reload_settings\",\"changed\":%s,\"hot_applied\":%s,\"restart_required\":%s,\"config_loaded\":%s}",
+                         changed_json,
+                         hot_applied_json,
+                         restart_required_json,
+                         result->config_loaded ? "true" : "false");
+}
+
 BsCommandRouter *
 bs_command_router_new(BsShelldApp *app) {
   BsCommandRouter *router = g_new0(BsCommandRouter, 1);
@@ -316,6 +382,7 @@ bs_command_router_parse_request(BsCommandRouter *router,
       (void) bs_json_extract_int_field(payload, "y", &request->y);
       break;
     case BS_COMMAND_SNAPSHOT:
+    case BS_COMMAND_RELOAD_SETTINGS:
     case BS_COMMAND_TOGGLE_LAUNCHPAD:
       break;
     default:
@@ -388,6 +455,18 @@ bs_command_router_handle_request(BsCommandRouter *router,
       }
       *response_json = bs_command_router_build_ack_json(request, true);
       return true;
+    case BS_COMMAND_RELOAD_SETTINGS: {
+      BsSettingsReloadResult result;
+
+      bs_settings_reload_result_init(&result);
+      if (!bs_shelld_app_reload_settings(router->app, &result, error)) {
+        bs_settings_reload_result_clear(&result);
+        return false;
+      }
+      *response_json = bs_command_router_build_reload_settings_json(&result);
+      bs_settings_reload_result_clear(&result);
+      return true;
+    }
     case BS_COMMAND_PIN_APP:
       if (!bs_shelld_app_pin_app(router->app, request->app_key, error)) {
         return false;

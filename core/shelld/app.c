@@ -128,9 +128,11 @@ bs_shelld_app_start(BsShelldApp *app, GError **error) {
 
   g_return_val_if_fail(app != NULL, false);
 
-  if (!bs_settings_service_load(app->settings_service, error)) {
+  if (!bs_settings_service_load_all(app->settings_service, error)) {
     return false;
   }
+  bs_shell_config_clear(&app->config);
+  bs_shell_config_copy(&app->config, bs_settings_service_shell_config(app->settings_service));
 
   if (!bs_app_registry_start(app->app_registry, error)) {
     return false;
@@ -177,7 +179,7 @@ bs_shelld_app_stop(BsShelldApp *app) {
   bs_tray_service_stop(app->tray_service);
   bs_niri_backend_stop(app->niri_backend);
   bs_app_registry_stop(app->app_registry);
-  (void) bs_settings_service_flush(app->settings_service, NULL);
+  (void) bs_settings_service_flush_state(app->settings_service, NULL);
   app->running = false;
 }
 
@@ -193,6 +195,26 @@ bs_shelld_app_run(BsShelldApp *app, GError **error) {
   g_main_loop_run(app->main_loop);
   bs_shelld_app_stop(app);
   return EXIT_SUCCESS;
+}
+
+bool
+bs_shelld_app_reload_settings(BsShelldApp *app,
+                              BsSettingsReloadResult *result,
+                              GError **error) {
+  g_return_val_if_fail(app != NULL, false);
+  g_return_val_if_fail(result != NULL, false);
+
+  if (!bs_settings_service_reload_config(app->settings_service, result, error)) {
+    return false;
+  }
+  bs_shell_config_clear(&app->config);
+  bs_shell_config_copy(&app->config, bs_settings_service_shell_config(app->settings_service));
+
+  g_message("[bit_shelld] settings reloaded: flags=%u hot=%s restart_required=%u",
+            (unsigned int) result->changed,
+            result->hot_applied ? "true" : "false",
+            result->restart_required_keys != NULL ? result->restart_required_keys->len : 0);
+  return true;
 }
 
 BsStateStore *
@@ -611,7 +633,7 @@ bs_shelld_app_set_app_pinned(BsShelldApp *app,
   bs_state_store_begin_update(app->state_store);
   bs_state_store_replace_pinned_app_ids(app->state_store, pinned_app_ids);
   bs_state_store_finish_update(app->state_store);
-  return bs_settings_service_flush(app->settings_service, error);
+  return bs_settings_service_flush_state(app->settings_service, error);
 }
 
 bool

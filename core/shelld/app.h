@@ -25,6 +25,9 @@ void bs_shelld_app_free(BsShelldApp *app);
 bool bs_shelld_app_start(BsShelldApp *app, GError **error);
 void bs_shelld_app_stop(BsShelldApp *app);
 int bs_shelld_app_run(BsShelldApp *app, GError **error);
+bool bs_shelld_app_reload_settings(BsShelldApp *app,
+                                   BsSettingsReloadResult *result,
+                                   GError **error);
 
 BsStateStore *bs_shelld_app_state_store(BsShelldApp *app);
 BsCommandRouter *bs_shelld_app_command_router(BsShelldApp *app);

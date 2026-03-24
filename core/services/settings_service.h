@@ -1,6 +1,7 @@
 #ifndef BIT_SHELL_CORE_SERVICES_SETTINGS_SERVICE_H
 #define BIT_SHELL_CORE_SERVICES_SETTINGS_SERVICE_H
 
+#include <glib.h>
 #include <gio/gio.h>
 #include <stdbool.h>
 
@@ -14,11 +15,37 @@ typedef struct {
   const char *state_path;
 } BsSettingsServiceConfig;
 
-BsSettingsService *bs_settings_service_new(BsStateStore *store, const BsSettingsServiceConfig *config);
+typedef enum {
+  BS_SETTINGS_RELOAD_NONE = 0,
+  BS_SETTINGS_RELOAD_DOCK_CHANGED = 1u << 0,
+  BS_SETTINGS_RELOAD_AUTO_RECONNECT_NIRI_CHANGED = 1u << 1,
+  BS_SETTINGS_RELOAD_TRAY_WATCHER_CHANGED = 1u << 2,
+  BS_SETTINGS_RELOAD_PRIMARY_OUTPUT_CHANGED = 1u << 3,
+  BS_SETTINGS_RELOAD_BAR_CHANGED = 1u << 4,
+  BS_SETTINGS_RELOAD_LAUNCHPAD_CHANGED = 1u << 5,
+} BsSettingsReloadFlags;
+
+typedef struct {
+  BsSettingsReloadFlags changed;
+  gboolean config_loaded;
+  gboolean hot_applied;
+  GPtrArray *hot_applied_keys;
+  GPtrArray *restart_required_keys;
+} BsSettingsReloadResult;
+
+BsSettingsService *bs_settings_service_new(BsStateStore *store,
+                                          const BsSettingsServiceConfig *config);
 void bs_settings_service_free(BsSettingsService *service);
 
-bool bs_settings_service_load(BsSettingsService *service, GError **error);
-bool bs_settings_service_flush(BsSettingsService *service, GError **error);
+void bs_settings_reload_result_init(BsSettingsReloadResult *result);
+void bs_settings_reload_result_clear(BsSettingsReloadResult *result);
+
+bool bs_settings_service_load_all(BsSettingsService *service, GError **error);
+bool bs_settings_service_reload_config(BsSettingsService *service,
+                                       BsSettingsReloadResult *out,
+                                       GError **error);
+bool bs_settings_service_import_state(BsSettingsService *service, GError **error);
+bool bs_settings_service_flush_state(BsSettingsService *service, GError **error);
 
 const BsShellConfig *bs_settings_service_shell_config(const BsSettingsService *service);
 void bs_settings_service_mark_state_dirty(BsSettingsService *service);
