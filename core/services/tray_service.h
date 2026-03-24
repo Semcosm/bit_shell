@@ -17,5 +17,17 @@ void bs_tray_service_free(BsTrayService *service);
 
 bool bs_tray_service_start(BsTrayService *service, GError **error);
 void bs_tray_service_stop(BsTrayService *service);
+bool bs_tray_service_activate_item(BsTrayService *service,
+                                   const char *item_id,
+                                   int32_t x,
+                                   int32_t y,
+                                   GError **error);
+bool bs_tray_service_context_menu_item(BsTrayService *service,
+                                       const char *item_id,
+                                       int32_t x,
+                                       int32_t y,
+                                       GError **error);
+const char *bs_tray_service_watcher_name(const BsTrayService *service);
+bool bs_tray_service_running(const BsTrayService *service);
 
 #endif

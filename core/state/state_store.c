@@ -18,7 +18,9 @@ static BsWorkspace *bs_workspace_dup(const BsWorkspace *workspace);
 static BsOutput *bs_output_dup(const BsOutput *output);
 static BsAppState *bs_app_state_dup(const BsAppState *app_state);
 static BsDockItem *bs_dock_item_dup(const BsDockItem *dock_item);
+static BsTrayItem *bs_tray_item_dup(const BsTrayItem *tray_item);
 static GPtrArray *bs_string_ptr_array_dup(GPtrArray *array);
+static bool bs_tray_item_equals(const BsTrayItem *lhs, const BsTrayItem *rhs);
 static void bs_state_store_rebuild_workspace_emptiness(BsStateStore *store);
 static void bs_state_store_refresh_shell_state(BsStateStore *store);
 static void bs_state_store_refresh_app_pins(BsStateStore *store);
@@ -92,6 +94,22 @@ bs_dock_item_clear(BsDockItem *dock_item) {
   if (dock_item->window_ids != NULL) {
     g_ptr_array_unref(dock_item->window_ids);
   }
+}
+
+void
+bs_tray_item_clear(BsTrayItem *tray_item) {
+  if (tray_item == NULL) {
+    return;
+  }
+
+  g_free(tray_item->item_id);
+  g_free(tray_item->bus_name);
+  g_free(tray_item->object_path);
+  g_free(tray_item->menu_object_path);
+  g_free(tray_item->id);
+  g_free(tray_item->title);
+  g_free(tray_item->icon_name);
+  g_free(tray_item->attention_icon_name);
 }
 
 static BsWindow *
@@ -207,6 +225,49 @@ bs_dock_item_dup(const BsDockItem *dock_item) {
   copy->pinned_index = dock_item->pinned_index;
   copy->running_order = dock_item->running_order;
   return copy;
+}
+
+static BsTrayItem *
+bs_tray_item_dup(const BsTrayItem *tray_item) {
+  BsTrayItem *copy = NULL;
+
+  if (tray_item == NULL) {
+    return NULL;
+  }
+
+  copy = g_new0(BsTrayItem, 1);
+  copy->item_id = g_strdup(tray_item->item_id);
+  copy->bus_name = g_strdup(tray_item->bus_name);
+  copy->object_path = g_strdup(tray_item->object_path);
+  copy->menu_object_path = g_strdup(tray_item->menu_object_path);
+  copy->id = g_strdup(tray_item->id);
+  copy->title = g_strdup(tray_item->title);
+  copy->icon_name = g_strdup(tray_item->icon_name);
+  copy->attention_icon_name = g_strdup(tray_item->attention_icon_name);
+  copy->status = tray_item->status;
+  copy->item_is_menu = tray_item->item_is_menu;
+  copy->has_activate = tray_item->has_activate;
+  copy->has_context_menu = tray_item->has_context_menu;
+  return copy;
+}
+
+static bool
+bs_tray_item_equals(const BsTrayItem *lhs, const BsTrayItem *rhs) {
+  g_return_val_if_fail(lhs != NULL, false);
+  g_return_val_if_fail(rhs != NULL, false);
+
+  return g_strcmp0(lhs->item_id, rhs->item_id) == 0
+         && g_strcmp0(lhs->bus_name, rhs->bus_name) == 0
+         && g_strcmp0(lhs->object_path, rhs->object_path) == 0
+         && g_strcmp0(lhs->menu_object_path, rhs->menu_object_path) == 0
+         && g_strcmp0(lhs->id, rhs->id) == 0
+         && g_strcmp0(lhs->title, rhs->title) == 0
+         && g_strcmp0(lhs->icon_name, rhs->icon_name) == 0
+         && g_strcmp0(lhs->attention_icon_name, rhs->attention_icon_name) == 0
+         && lhs->status == rhs->status
+         && lhs->item_is_menu == rhs->item_is_menu
+         && lhs->has_activate == rhs->has_activate
+         && lhs->has_context_menu == rhs->has_context_menu;
 }
 
 static void
@@ -398,6 +459,14 @@ bs_state_store_lookup_dock_item(BsStateStore *store, const char *app_key) {
   g_return_val_if_fail(app_key != NULL, NULL);
 
   return g_hash_table_lookup(store->snapshot.dock_items, app_key);
+}
+
+const BsTrayItem *
+bs_state_store_lookup_tray_item(BsStateStore *store, const char *item_id) {
+  g_return_val_if_fail(store != NULL, NULL);
+  g_return_val_if_fail(item_id != NULL, NULL);
+
+  return g_hash_table_lookup(store->snapshot.tray_items, item_id);
 }
 
 GPtrArray *
@@ -756,6 +825,51 @@ bs_state_store_replace_dock_items(BsStateStore *store, GPtrArray *dock_items) {
   }
 
   bs_state_store_mark_topic_changed(store, BS_TOPIC_DOCK);
+}
+
+bool
+bs_state_store_replace_tray_item(BsStateStore *store, const BsTrayItem *item) {
+  const BsTrayItem *existing = NULL;
+
+  g_return_val_if_fail(store != NULL, false);
+  g_return_val_if_fail(item != NULL, false);
+  g_return_val_if_fail(item->item_id != NULL, false);
+
+  existing = g_hash_table_lookup(store->snapshot.tray_items, item->item_id);
+  if (existing != NULL && bs_tray_item_equals(existing, item)) {
+    return false;
+  }
+
+  g_hash_table_replace(store->snapshot.tray_items,
+                       g_strdup(item->item_id),
+                       bs_tray_item_dup(item));
+  bs_state_store_mark_topic_changed(store, BS_TOPIC_TRAY);
+  return true;
+}
+
+bool
+bs_state_store_remove_tray_item(BsStateStore *store, const char *item_id) {
+  g_return_val_if_fail(store != NULL, false);
+  g_return_val_if_fail(item_id != NULL, false);
+
+  if (!g_hash_table_remove(store->snapshot.tray_items, item_id)) {
+    return false;
+  }
+
+  bs_state_store_mark_topic_changed(store, BS_TOPIC_TRAY);
+  return true;
+}
+
+void
+bs_state_store_clear_tray_items(BsStateStore *store) {
+  g_return_if_fail(store != NULL);
+
+  if (g_hash_table_size(store->snapshot.tray_items) == 0) {
+    return;
+  }
+
+  g_hash_table_remove_all(store->snapshot.tray_items);
+  bs_state_store_mark_topic_changed(store, BS_TOPIC_TRAY);
 }
 
 void

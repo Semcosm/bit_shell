@@ -720,3 +720,27 @@ bs_shelld_app_unpin_app(BsShelldApp *app,
                         GError **error) {
   return bs_shelld_app_set_app_pinned(app, app_key, false, error);
 }
+
+bool
+bs_shelld_app_tray_activate_item(BsShelldApp *app,
+                                 const char *item_id,
+                                 int32_t x,
+                                 int32_t y,
+                                 GError **error) {
+  g_return_val_if_fail(app != NULL, false);
+  g_return_val_if_fail(item_id != NULL, false);
+
+  return bs_tray_service_activate_item(app->tray_service, item_id, x, y, error);
+}
+
+bool
+bs_shelld_app_tray_context_menu_item(BsShelldApp *app,
+                                     const char *item_id,
+                                     int32_t x,
+                                     int32_t y,
+                                     GError **error) {
+  g_return_val_if_fail(app != NULL, false);
+  g_return_val_if_fail(item_id != NULL, false);
+
+  return bs_tray_service_context_menu_item(app->tray_service, item_id, x, y, error);
+}

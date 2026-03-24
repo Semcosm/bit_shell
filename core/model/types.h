@@ -67,11 +67,33 @@ typedef struct {
   int running_order;
 } BsDockItem;
 
+typedef enum {
+  BS_TRAY_ITEM_STATUS_PASSIVE = 0,
+  BS_TRAY_ITEM_STATUS_ACTIVE,
+  BS_TRAY_ITEM_STATUS_ATTENTION,
+} BsTrayItemStatus;
+
+typedef struct {
+  char *item_id;
+  char *bus_name;
+  char *object_path;
+  char *menu_object_path;
+  char *id;
+  char *title;
+  char *icon_name;
+  char *attention_icon_name;
+  BsTrayItemStatus status;
+  bool item_is_menu;
+  bool has_activate;
+  bool has_context_menu;
+} BsTrayItem;
+
 void bs_shell_state_clear(BsShellState *shell_state);
 void bs_window_clear(BsWindow *window);
 void bs_workspace_clear(BsWorkspace *workspace);
 void bs_output_clear(BsOutput *output);
 void bs_app_state_clear(BsAppState *app_state);
 void bs_dock_item_clear(BsDockItem *dock_item);
+void bs_tray_item_clear(BsTrayItem *tray_item);
 
 #endif

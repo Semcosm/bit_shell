@@ -27,6 +27,7 @@ uint64_t bs_state_store_generation(const BsStateStore *store);
 uint64_t bs_state_store_topic_generation(const BsStateStore *store, BsTopic topic);
 const BsWindow *bs_state_store_lookup_window(BsStateStore *store, const char *window_id);
 const BsDockItem *bs_state_store_lookup_dock_item(BsStateStore *store, const char *app_key);
+const BsTrayItem *bs_state_store_lookup_tray_item(BsStateStore *store, const char *item_id);
 GPtrArray *bs_state_store_list_app_windows(BsStateStore *store, const char *app_key);
 
 void bs_state_store_begin_update(BsStateStore *store);
@@ -55,6 +56,9 @@ void bs_state_store_set_window_focus_timestamp(BsStateStore *store,
                                                uint64_t focus_ts);
 void bs_state_store_replace_apps(BsStateStore *store, GPtrArray *apps);
 void bs_state_store_replace_dock_items(BsStateStore *store, GPtrArray *dock_items);
+bool bs_state_store_replace_tray_item(BsStateStore *store, const BsTrayItem *item);
+bool bs_state_store_remove_tray_item(BsStateStore *store, const char *item_id);
+void bs_state_store_clear_tray_items(BsStateStore *store);
 void bs_state_store_replace_pinned_app_ids(BsStateStore *store, GPtrArray *pinned_app_ids);
 void bs_state_store_replace_dock_config(BsStateStore *store, const BsDockConfig *dock_config);
 

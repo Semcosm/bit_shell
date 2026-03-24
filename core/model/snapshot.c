@@ -8,6 +8,7 @@ static void bs_hash_table_destroy_workspace(gpointer value);
 static void bs_hash_table_destroy_output(gpointer value);
 static void bs_hash_table_destroy_app_state(gpointer value);
 static void bs_hash_table_destroy_dock_item(gpointer value);
+static void bs_hash_table_destroy_tray_item(gpointer value);
 static GHashTable *bs_hash_table_new_full_map(GDestroyNotify value_destroy);
 static void bs_json_append_quoted(GString *json, const char *value);
 static void bs_json_append_nullable_string(GString *json, const char *value);
@@ -19,6 +20,8 @@ static gint bs_compare_workspace(gconstpointer lhs, gconstpointer rhs);
 static gint bs_compare_output(gconstpointer lhs, gconstpointer rhs);
 static gint bs_compare_window(gconstpointer lhs, gconstpointer rhs);
 static gint bs_compare_dock_item(gconstpointer lhs, gconstpointer rhs);
+static gint bs_compare_tray_item(gconstpointer lhs, gconstpointer rhs);
+static const char *bs_tray_item_status_to_string(BsTrayItemStatus status);
 
 static void
 bs_hash_table_destroy_window(gpointer value) {
@@ -68,6 +71,16 @@ bs_hash_table_destroy_dock_item(gpointer value) {
   }
   bs_dock_item_clear(dock_item);
   g_free(dock_item);
+}
+
+static void
+bs_hash_table_destroy_tray_item(gpointer value) {
+  BsTrayItem *tray_item = value;
+  if (tray_item == NULL) {
+    return;
+  }
+  bs_tray_item_clear(tray_item);
+  g_free(tray_item);
 }
 
 static GHashTable *
@@ -223,6 +236,26 @@ bs_compare_dock_item(gconstpointer lhs, gconstpointer rhs) {
     return a->running_order < b->running_order ? -1 : 1;
   }
   return g_strcmp0(a->app_key, b->app_key);
+}
+
+static gint
+bs_compare_tray_item(gconstpointer lhs, gconstpointer rhs) {
+  const BsTrayItem *a = *(BsTrayItem * const *) lhs;
+  const BsTrayItem *b = *(BsTrayItem * const *) rhs;
+  return g_strcmp0(a->item_id, b->item_id);
+}
+
+static const char *
+bs_tray_item_status_to_string(BsTrayItemStatus status) {
+  switch (status) {
+    case BS_TRAY_ITEM_STATUS_ACTIVE:
+      return "active";
+    case BS_TRAY_ITEM_STATUS_ATTENTION:
+      return "attention";
+    case BS_TRAY_ITEM_STATUS_PASSIVE:
+    default:
+      return "passive";
+  }
 }
 
 static void
@@ -388,6 +421,44 @@ bs_json_append_settings_payload(GString *json, const BsSnapshot *snapshot) {
                          snapshot->dock_config.center_on_primary_output ? "true" : "false");
 }
 
+static void
+bs_json_append_tray_payload(GString *json, const BsSnapshot *snapshot) {
+  g_autoptr(GPtrArray) tray_items = bs_hash_table_values_to_ptr_array(snapshot->tray_items);
+
+  g_ptr_array_sort(tray_items, bs_compare_tray_item);
+  g_string_append(json, "{\"items\":[");
+  for (guint i = 0; i < tray_items->len; i++) {
+    const BsTrayItem *tray_item = g_ptr_array_index(tray_items, i);
+
+    if (i > 0) {
+      g_string_append(json, ",");
+    }
+
+    g_string_append(json, "{");
+    g_string_append(json, "\"item_id\":");
+    bs_json_append_nullable_string(json, tray_item->item_id);
+    g_string_append(json, ",\"id\":");
+    bs_json_append_nullable_string(json, tray_item->id);
+    g_string_append(json, ",\"title\":");
+    bs_json_append_nullable_string(json, tray_item->title);
+    g_string_append(json, ",\"status\":");
+    bs_json_append_nullable_string(json, bs_tray_item_status_to_string(tray_item->status));
+    g_string_append(json, ",\"icon_name\":");
+    bs_json_append_nullable_string(json, tray_item->icon_name);
+    g_string_append(json, ",\"attention_icon_name\":");
+    bs_json_append_nullable_string(json, tray_item->attention_icon_name);
+    g_string_append(json, ",\"menu_object_path\":");
+    bs_json_append_nullable_string(json, tray_item->menu_object_path);
+    g_string_append_printf(json,
+                           ",\"item_is_menu\":%s,\"has_activate\":%s,\"has_context_menu\":%s",
+                           tray_item->item_is_menu ? "true" : "false",
+                           tray_item->has_activate ? "true" : "false",
+                           tray_item->has_context_menu ? "true" : "false");
+    g_string_append(json, "}");
+  }
+  g_string_append(json, "]}");
+}
+
 void
 bs_snapshot_init(BsSnapshot *snapshot) {
   g_return_if_fail(snapshot != NULL);
@@ -398,6 +469,7 @@ bs_snapshot_init(BsSnapshot *snapshot) {
   snapshot->outputs = bs_hash_table_new_full_map(bs_hash_table_destroy_output);
   snapshot->apps = bs_hash_table_new_full_map(bs_hash_table_destroy_app_state);
   snapshot->dock_items = bs_hash_table_new_full_map(bs_hash_table_destroy_dock_item);
+  snapshot->tray_items = bs_hash_table_new_full_map(bs_hash_table_destroy_tray_item);
   snapshot->pinned_app_ids = g_ptr_array_new_with_free_func(g_free);
 }
 
@@ -412,6 +484,7 @@ bs_snapshot_clear(BsSnapshot *snapshot) {
   g_clear_pointer(&snapshot->outputs, g_hash_table_unref);
   g_clear_pointer(&snapshot->apps, g_hash_table_unref);
   g_clear_pointer(&snapshot->dock_items, g_hash_table_unref);
+  g_clear_pointer(&snapshot->tray_items, g_hash_table_unref);
   g_clear_pointer(&snapshot->pinned_app_ids, g_ptr_array_unref);
   memset(snapshot->topic_generations, 0, sizeof(snapshot->topic_generations));
   snapshot->generation = 0;
@@ -464,7 +537,7 @@ bs_snapshot_serialize_topic_payload_json(const BsSnapshot *snapshot, BsTopic top
       bs_json_append_dock_payload(json, snapshot);
       break;
     case BS_TOPIC_TRAY:
-      g_string_append(json, "{\"items\":[]}");
+      bs_json_append_tray_payload(json, snapshot);
       break;
     case BS_TOPIC_SETTINGS:
       bs_json_append_settings_payload(json, snapshot);

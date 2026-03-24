@@ -149,7 +149,22 @@ topic 与 `BsTopic` 一致：
       ]
     },
     "dock": { "items": [] },
-    "tray": { "items": [] },
+    "tray": {
+      "items": [
+        {
+          "item_id": ":1.42/StatusNotifierItem",
+          "id": "org.example.TestItem",
+          "title": "Test Item",
+          "status": "active",
+          "icon_name": "application-x-executable",
+          "attention_icon_name": null,
+          "menu_object_path": "/MenuBar",
+          "item_is_menu": false,
+          "has_activate": true,
+          "has_context_menu": true
+        }
+      ]
+    },
     "settings": {
       "config_loaded": true,
       "pinned_apps": [],
@@ -256,6 +271,22 @@ topic 与 `BsTopic` 一致：
 - `payload` 的结构与 `snapshot.state.<topic>` 一致。
 - 一个逻辑更新可同时触发多个 topic；这些事件可能共享同一 `generation`，但各自 `version` 独立递增。
 
+## Tray 命令
+
+```json
+{ "op": "tray_activate", "item_id": ":1.42/StatusNotifierItem", "x": 120, "y": 36 }
+```
+
+```json
+{ "op": "tray_context_menu", "item_id": ":1.42/StatusNotifierItem", "x": 120, "y": 36 }
+```
+
+说明：
+
+- `tray_activate` 当前会透传到目标 item 的 `Activate(x, y)`
+- `tray_context_menu` 当前会透传到目标 item 的 `ContextMenu(x, y)`
+- 若 `item_id` 不存在，服务端返回标准 error JSON
+
 ### 版本语义
 
 - `generation`：全局状态版本，只要本次更新有任一 topic 变化就递增
@@ -270,10 +301,10 @@ topic 与 `BsTopic` 一致：
 
 ## 当前 core 落地状态
 
-- `snapshot` 已输出真实 topic 结构：`shell/windows/workspaces/dock` 为完整结构，`settings` 已包含 `pinned_apps` 与 `dock` 配置对象，`tray` 仍为最小结构
+- `snapshot` 已输出真实 topic 结构：`shell/windows/workspaces/dock/settings` 为完整结构，`tray` 当前输出真实 `items` 数组
 - `subscribe` 已在 IPC server 内维持客户端订阅集合，并在 `StateStore` topic 变化时向对应客户端推送 `event`
 - `StateStore` 支持批量更新事务（begin/finish），可在一次提交中原子推进多 topic 版本
-- `switch_workspace`、`focus_window`、`activate_app`、`focus_next_app_window`、`focus_prev_app_window`、`launch_app`、`pin_app`、`unpin_app` 已接入真实执行链路
+- `switch_workspace`、`focus_window`、`activate_app`、`focus_next_app_window`、`focus_prev_app_window`、`launch_app`、`pin_app`、`unpin_app`、`tray_activate`、`tray_context_menu` 已接入真实执行链路
 - `reload_settings` 已接入真实执行链路，并返回“已热应用 / 需重启”的结构化结果
 - `pin_app` / `unpin_app` 当前会更新内存状态并立即 flush 到 `state.json`
 - 其余命令当前仍以 `ack + params + todo` 形式回包

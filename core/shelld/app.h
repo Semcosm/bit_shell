@@ -56,5 +56,15 @@ bool bs_shelld_app_pin_app(BsShelldApp *app,
 bool bs_shelld_app_unpin_app(BsShelldApp *app,
                              const char *app_key,
                              GError **error);
+bool bs_shelld_app_tray_activate_item(BsShelldApp *app,
+                                      const char *item_id,
+                                      int32_t x,
+                                      int32_t y,
+                                      GError **error);
+bool bs_shelld_app_tray_context_menu_item(BsShelldApp *app,
+                                          const char *item_id,
+                                          int32_t x,
+                                          int32_t y,
+                                          GError **error);
 
 #endif

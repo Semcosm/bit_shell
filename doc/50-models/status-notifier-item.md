@@ -11,6 +11,14 @@
 - `bit_shelld` 承担 host/watcher 生命周期管理。
 - `bit_bar` 仅渲染 `TrayItemViewModel` 并回传交互。
 
+## 当前 3B-1 范围
+
+- `bit_shelld` 当前已导出最小 `StatusNotifierWatcher`，接受 item 注册并在 session bus 上镜像 item 生命周期。
+- `tray` topic / snapshot / IPC event 当前会输出真实 item 数组，首版仅镜像 `id/title/status/icon_name/attention_icon_name/menu_object_path/item_is_menu`。
+- `tray_activate` 与 `tray_context_menu` 当前会分别透传到 item 的 `Activate(x, y)` 与 `ContextMenu(x, y)`。
+- item 对应的 bus name 消失时，shell 会自动把该 item 从 tray state 中移除。
+- `IconPixmap`、dbusmenu 树同步、多 host 管理，以及 `shell.tray_watcher_name` 热切换仍后置到后续阶段。
+
 ## 交互建议
 
 - 左键映射 `Activate(x, y)`

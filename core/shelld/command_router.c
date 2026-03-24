@@ -479,6 +479,26 @@ bs_command_router_handle_request(BsCommandRouter *router,
       }
       *response_json = bs_command_router_build_ack_json(request, true);
       return true;
+    case BS_COMMAND_TRAY_ACTIVATE:
+      if (!bs_shelld_app_tray_activate_item(router->app,
+                                            request->item_id,
+                                            request->x,
+                                            request->y,
+                                            error)) {
+        return false;
+      }
+      *response_json = bs_command_router_build_ack_json(request, true);
+      return true;
+    case BS_COMMAND_TRAY_CONTEXT_MENU:
+      if (!bs_shelld_app_tray_context_menu_item(router->app,
+                                                request->item_id,
+                                                request->x,
+                                                request->y,
+                                                error)) {
+        return false;
+      }
+      *response_json = bs_command_router_build_ack_json(request, true);
+      return true;
     default: {
       *response_json = bs_command_router_build_ack_json(request, false);
       return true;
