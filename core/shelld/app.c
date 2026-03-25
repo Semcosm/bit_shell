@@ -49,7 +49,10 @@ static bool bs_shelld_app_set_app_pinned(BsShelldApp *app,
                                          const char *app_key,
                                          bool pinned,
                                          GError **error);
-static bool bs_shelld_app_ptr_array_remove_string(GPtrArray *values, const char *value);
+static bool bs_shelld_app_recreate_tray_service(BsShelldApp *app,
+                                                const char *watcher_name,
+                                                GError **error);
+static void bs_shelld_app_append_reload_key(GPtrArray *values, const char *value);
 static bool bs_shelld_app_reload_settings_from_watcher(gpointer user_data,
                                                        BsSettingsReloadResult *result,
                                                        GError **error);
@@ -225,32 +228,89 @@ bool
 bs_shelld_app_reload_settings(BsShelldApp *app,
                               BsSettingsReloadResult *result,
                               GError **error) {
+  BsSettingsReloadPlan plan = {0};
+  const BsShellConfig *current_config = NULL;
+  bool tray_recreated = false;
+
   g_return_val_if_fail(app != NULL, false);
   g_return_val_if_fail(result != NULL, false);
 
-  if (!bs_settings_service_reload_config(app->settings_service, result, error)) {
+  bs_settings_reload_plan_init(&plan);
+  if (!bs_settings_service_prepare_reload(app->settings_service, &plan, error)) {
     return false;
   }
+  result->changed = plan.changed;
+  result->config_loaded = true;
+  current_config = bs_settings_service_shell_config(app->settings_service);
 
-  if ((result->changed & BS_SETTINGS_RELOAD_AUTO_RECONNECT_NIRI_CHANGED) != 0) {
-    const BsShellConfig *effective_config = bs_settings_service_shell_config(app->settings_service);
-
-    if (!bs_niri_backend_set_auto_reconnect(app->niri_backend,
-                                            effective_config->auto_reconnect_niri,
-                                            error)) {
+  if ((plan.changed & BS_SETTINGS_RELOAD_TRAY_WATCHER_CHANGED) != 0) {
+    if (!bs_shelld_app_recreate_tray_service(app, plan.next_config.tray_watcher_name, error)) {
+      bs_settings_reload_plan_clear(&plan);
       return false;
     }
-
-    (void) bs_shelld_app_ptr_array_remove_string(result->restart_required_keys,
-                                                 "shell.auto_reconnect_niri");
-    if (result->hot_applied_keys != NULL) {
-      g_ptr_array_add(result->hot_applied_keys, g_strdup("shell.auto_reconnect_niri"));
-    }
+    tray_recreated = true;
+    bs_shelld_app_append_reload_key(result->hot_applied_keys, "shell.tray_watcher_name");
     result->hot_applied = true;
   }
 
+  if ((plan.changed & BS_SETTINGS_RELOAD_AUTO_RECONNECT_NIRI_CHANGED) != 0) {
+    if (!bs_niri_backend_set_auto_reconnect(app->niri_backend,
+                                            plan.next_config.auto_reconnect_niri,
+                                            error)) {
+      if (tray_recreated) {
+        g_autoptr(GError) rollback_error = NULL;
+
+        if (!bs_shelld_app_recreate_tray_service(app,
+                                                 current_config->tray_watcher_name,
+                                                 &rollback_error)) {
+          g_warning("[bit_shelld] failed to rollback tray watcher after reload failure: %s",
+                    rollback_error != NULL ? rollback_error->message : "unknown error");
+        }
+      }
+      bs_settings_reload_plan_clear(&plan);
+      return false;
+    }
+    bs_shelld_app_append_reload_key(result->hot_applied_keys, "shell.auto_reconnect_niri");
+    result->hot_applied = true;
+  }
+
+  if ((plan.changed & BS_SETTINGS_RELOAD_DOCK_CHANGED) != 0) {
+    if (!bs_settings_service_apply_dock_config(app->settings_service, &plan.next_config.dock)) {
+      if (tray_recreated) {
+        g_autoptr(GError) rollback_error = NULL;
+
+        if (!bs_shelld_app_recreate_tray_service(app,
+                                                 current_config->tray_watcher_name,
+                                                 &rollback_error)) {
+          g_warning("[bit_shelld] failed to rollback tray watcher after dock apply failure: %s",
+                    rollback_error != NULL ? rollback_error->message : "unknown error");
+        }
+      }
+      bs_settings_reload_plan_clear(&plan);
+      g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "failed to apply dock config");
+      return false;
+    }
+    bs_shelld_app_append_reload_key(result->hot_applied_keys, "dock.*");
+    result->hot_applied = true;
+  }
+
+  if ((plan.changed & BS_SETTINGS_RELOAD_PRIMARY_OUTPUT_CHANGED) != 0) {
+    bs_shelld_app_append_reload_key(result->restart_required_keys, "shell.primary_output");
+  }
+  if ((plan.changed & BS_SETTINGS_RELOAD_BAR_CHANGED) != 0) {
+    bs_shelld_app_append_reload_key(result->restart_required_keys, "bar.*");
+  }
+  if ((plan.changed & BS_SETTINGS_RELOAD_LAUNCHPAD_CHANGED) != 0) {
+    bs_shelld_app_append_reload_key(result->restart_required_keys, "launchpad.*");
+  }
+
+  if (!bs_settings_service_commit_reload(app->settings_service, &plan, result, error)) {
+    bs_settings_reload_plan_clear(&plan);
+    return false;
+  }
   bs_shell_config_clear(&app->config);
   bs_shell_config_copy(&app->config, bs_settings_service_shell_config(app->settings_service));
+  bs_settings_reload_plan_clear(&plan);
 
   g_message("[bit_shelld] settings reloaded: flags=%u hot=%s restart_required=%u",
             (unsigned int) result->changed,
@@ -260,25 +320,52 @@ bs_shelld_app_reload_settings(BsShelldApp *app,
 }
 
 static bool
-bs_shelld_app_ptr_array_remove_string(GPtrArray *values, const char *value) {
-  guint index = 0;
+bs_shelld_app_recreate_tray_service(BsShelldApp *app,
+                                    const char *watcher_name,
+                                    GError **error) {
+  BsTrayServiceConfig tray_config = {0};
+  BsTrayService *next = NULL;
+  BsTrayService *previous = NULL;
 
-  if (values == NULL || value == NULL) {
+  g_return_val_if_fail(app != NULL, false);
+  g_return_val_if_fail(watcher_name != NULL, false);
+
+  tray_config.watcher_name = watcher_name;
+  next = bs_tray_service_new(app->state_store, &tray_config);
+  if (next == NULL) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "failed to allocate tray service");
     return false;
   }
 
-  for (index = 0; index < values->len; index++) {
-    const char *existing = g_ptr_array_index(values, index);
-
-    if (g_strcmp0(existing, value) != 0) {
-      continue;
-    }
-
-    g_ptr_array_remove_index(values, index);
-    return true;
+  previous = app->tray_service;
+  if (previous != NULL) {
+    bs_tray_service_stop(previous);
   }
 
-  return false;
+  if (!bs_tray_service_start(next, error)) {
+    g_autoptr(GError) rollback_error = NULL;
+
+    if (previous != NULL && !bs_tray_service_start(previous, &rollback_error)) {
+      g_warning("[bit_shelld] failed to restore previous tray service: %s",
+                rollback_error != NULL ? rollback_error->message : "unknown error");
+    }
+    bs_tray_service_free(next);
+    return false;
+  }
+
+  app->tray_service = next;
+  if (previous != NULL) {
+    bs_tray_service_free(previous);
+  }
+  return true;
+}
+
+static void
+bs_shelld_app_append_reload_key(GPtrArray *values, const char *value) {
+  g_return_if_fail(values != NULL);
+  g_return_if_fail(value != NULL);
+
+  g_ptr_array_add(values, g_strdup(value));
 }
 
 static bool

@@ -210,7 +210,8 @@ topic 与 `BsTopic` 一致：
 - 第一版 `reload_settings` 只对 `config.toml` 生效，不会导入 `state.json`
 - 当前 `dock.*` 走 `StateStore -> IPC event -> frontend` 热更新通路
 - `shell.auto_reconnect_niri` 当前会直接切换 niri backend 的运行时重连策略
-- `shell.tray_watcher_name`、`shell.primary_output` 当前会报告为需要重启后端
+- `shell.tray_watcher_name` 当前会通过 app 层重建 tray service 热应用；切换期间 tray state 会短暂清空后按新 watcher 重建
+- `shell.primary_output` 当前仍会报告为需要重启后端
 - `bar.*`、`launchpad.*` 当前尚无运行时消费者，因此只会出现在 `restart_required`
 - 自动配置 watcher 只是对该命令的触发补充，不替代手动 `reload_settings` IPC 入口
 

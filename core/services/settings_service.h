@@ -33,15 +33,28 @@ typedef struct {
   GPtrArray *restart_required_keys;
 } BsSettingsReloadResult;
 
+typedef struct {
+  BsShellConfig next_config;
+  BsSettingsReloadFlags changed;
+} BsSettingsReloadPlan;
+
 BsSettingsService *bs_settings_service_new(BsStateStore *store,
                                           const BsSettingsServiceConfig *config);
 void bs_settings_service_free(BsSettingsService *service);
 
 void bs_settings_reload_result_init(BsSettingsReloadResult *result);
 void bs_settings_reload_result_clear(BsSettingsReloadResult *result);
+void bs_settings_reload_plan_init(BsSettingsReloadPlan *plan);
+void bs_settings_reload_plan_clear(BsSettingsReloadPlan *plan);
 
 bool bs_settings_service_load_all(BsSettingsService *service, GError **error);
-bool bs_settings_service_reload_config(BsSettingsService *service,
+bool bs_settings_service_prepare_reload(BsSettingsService *service,
+                                        BsSettingsReloadPlan *plan,
+                                        GError **error);
+bool bs_settings_service_apply_dock_config(BsSettingsService *service,
+                                           const BsDockConfig *dock_config);
+bool bs_settings_service_commit_reload(BsSettingsService *service,
+                                       const BsSettingsReloadPlan *plan,
                                        BsSettingsReloadResult *out,
                                        GError **error);
 bool bs_settings_service_import_state(BsSettingsService *service, GError **error);

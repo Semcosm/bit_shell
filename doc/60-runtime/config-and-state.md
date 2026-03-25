@@ -74,7 +74,7 @@
 - `pinned_apps` 当前已驱动 `DockService` 的 pinned + running 聚合。
 - `pin_app` / `unpin_app` 命令当前会立即触发一次 `flush_state()`。
 - `flush_state()` 会按当前内存状态重写 `state.json`，其中 `pinned_apps` 为真实内容，其余列表仍是占位结构。
-- `reload_config()` 只读取 `config.toml`，不会导入 `state.json`；第一版仅 `dock.*` 支持热更新，其余字段会记录为需要重启后端后生效。
+- `reload_config()` 只读取 `config.toml`，不会导入 `state.json`；当前 `dock.*`、`shell.auto_reconnect_niri`、`shell.tray_watcher_name` 支持热更新，其中 tray watcher 会通过 app 层重建 tray service 生效。
 - `import_state()` 保留“显式导入运行时状态”语义，不参与自动配置热更新。
 - 当前 daemon 会监控 `config.toml` 所在目录，并对目标文件变化做 debounce 后自动触发 `reload_config()`。
 - `state.json` 的变化不会触发自动 reload。
@@ -136,9 +136,10 @@ show_categories = true
 ## 当前边界
 
 - `config.toml` 当前已支持 `shell/bar/dock/launchpad` 标量字段的读取、类型/枚举校验与默认值覆盖；其中 Dock 配置会进一步经过统一的 `BsDockConfig` 归一化，再由前端派生为 `BsDockMetrics`。
-- 运行时 `reload_config()` 当前只对 `dock.*` 走 `StateStore -> IPC event -> frontend` 热更新通路。
+- 运行时 `reload_config()` 当前会热应用 `dock.*`、`shell.auto_reconnect_niri`、`shell.tray_watcher_name`。
 - `shell.auto_reconnect_niri` 当前会直接下发到 niri backend 的重连策略，可在运行时切换而无需重启后端。
-- `tray` topic 当前已有真实运行时消费者与 IPC 执行链路，但 `shell.tray_watcher_name`、`shell.primary_output` 仍需要重启后端后完全生效。
+- `shell.tray_watcher_name` 当前会通过 app 层重建 tray service 生效；切换期间 tray state 会短暂清空后按新 watcher 重建。
+- `tray` topic 当前已有真实运行时消费者与 IPC 执行链路，但 `shell.primary_output` 仍需要重启后端后完全生效。
 - `bar.*` 与 `launchpad.*` 当前尚无运行时消费者。
 - `config.toml` 尚未覆盖更复杂的 TOML 特性（如数组、嵌套表、内联表）。
 - `recent_apps` / `favorites` / `recent_workspaces` 仍未解析，也尚未与 launchpad 等业务状态联动。

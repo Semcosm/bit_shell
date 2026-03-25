@@ -38,11 +38,8 @@ static bool bs_settings_service_read_config_text(BsSettingsService *service,
 static bool bs_settings_service_read_state_text(BsSettingsService *service,
                                                 char **state_contents_out,
                                                 GError **error);
-static bool bs_settings_service_apply_dock_to_store(BsSettingsService *service,
-                                                    const BsDockConfig *dock_config);
 static BsSettingsReloadFlags bs_settings_service_diff_config(const BsShellConfig *current,
                                                             const BsShellConfig *next);
-static void bs_settings_service_append_key(GPtrArray *values, const char *key);
 
 static bool
 bs_settings_service_ensure_parent_dir(const char *path, GError **error) {
@@ -640,8 +637,8 @@ bs_settings_service_read_state_text(BsSettingsService *service,
   return g_file_get_contents(service->state_path, state_contents_out, NULL, error);
 }
 
-static bool
-bs_settings_service_apply_dock_to_store(BsSettingsService *service, const BsDockConfig *dock_config) {
+bool
+bs_settings_service_apply_dock_config(BsSettingsService *service, const BsDockConfig *dock_config) {
   g_return_val_if_fail(service != NULL, false);
   g_return_val_if_fail(dock_config != NULL, false);
 
@@ -680,14 +677,6 @@ bs_settings_service_diff_config(const BsShellConfig *current, const BsShellConfi
   return flags;
 }
 
-static void
-bs_settings_service_append_key(GPtrArray *values, const char *key) {
-  g_return_if_fail(values != NULL);
-  g_return_if_fail(key != NULL);
-
-  g_ptr_array_add(values, g_strdup(key));
-}
-
 BsSettingsService *
 bs_settings_service_new(BsStateStore *store, const BsSettingsServiceConfig *config) {
   BsSettingsService *service = g_new0(BsSettingsService, 1);
@@ -716,6 +705,13 @@ bs_settings_reload_result_init(BsSettingsReloadResult *result) {
 }
 
 void
+bs_settings_reload_plan_init(BsSettingsReloadPlan *plan) {
+  g_return_if_fail(plan != NULL);
+
+  memset(plan, 0, sizeof(*plan));
+}
+
+void
 bs_settings_reload_result_clear(BsSettingsReloadResult *result) {
   if (result == NULL) {
     return;
@@ -724,6 +720,16 @@ bs_settings_reload_result_clear(BsSettingsReloadResult *result) {
   g_clear_pointer(&result->hot_applied_keys, g_ptr_array_unref);
   g_clear_pointer(&result->restart_required_keys, g_ptr_array_unref);
   memset(result, 0, sizeof(*result));
+}
+
+void
+bs_settings_reload_plan_clear(BsSettingsReloadPlan *plan) {
+  if (plan == NULL) {
+    return;
+  }
+
+  bs_shell_config_clear(&plan->next_config);
+  memset(plan, 0, sizeof(*plan));
 }
 
 void
@@ -769,15 +775,14 @@ bs_settings_service_load_all(BsSettingsService *service, GError **error) {
 }
 
 bool
-bs_settings_service_reload_config(BsSettingsService *service,
-                                  BsSettingsReloadResult *out,
-                                  GError **error) {
+bs_settings_service_prepare_reload(BsSettingsService *service,
+                                   BsSettingsReloadPlan *plan,
+                                   GError **error) {
   g_autofree char *config_contents = NULL;
   BsShellConfig parsed_config = {0};
-  BsSettingsReloadFlags changed = BS_SETTINGS_RELOAD_NONE;
 
   g_return_val_if_fail(service != NULL, false);
-  g_return_val_if_fail(out != NULL, false);
+  g_return_val_if_fail(plan != NULL, false);
 
   if (!bs_settings_service_read_config_text(service, &config_contents, error)) {
     return false;
@@ -786,38 +791,30 @@ bs_settings_service_reload_config(BsSettingsService *service,
     return false;
   }
 
-  changed = bs_settings_service_diff_config(&service->shell_config, &parsed_config);
-  out->changed = changed;
-  out->config_loaded = true;
+  bs_settings_reload_plan_clear(plan);
+  plan->changed = bs_settings_service_diff_config(&service->shell_config, &parsed_config);
+  plan->next_config = parsed_config;
+  return true;
+}
 
-  if ((changed & BS_SETTINGS_RELOAD_DOCK_CHANGED) != 0
-      && !bs_settings_service_apply_dock_to_store(service, &parsed_config.dock)) {
-    bs_shell_config_clear(&parsed_config);
-    return false;
-  }
+bool
+bs_settings_service_commit_reload(BsSettingsService *service,
+                                  const BsSettingsReloadPlan *plan,
+                                  BsSettingsReloadResult *out,
+                                  GError **error) {
+  BsShellConfig committed = {0};
 
-  if ((changed & BS_SETTINGS_RELOAD_DOCK_CHANGED) != 0) {
-    out->hot_applied = true;
-    bs_settings_service_append_key(out->hot_applied_keys, "dock.*");
-  }
-  if ((changed & BS_SETTINGS_RELOAD_AUTO_RECONNECT_NIRI_CHANGED) != 0) {
-    bs_settings_service_append_key(out->restart_required_keys, "shell.auto_reconnect_niri");
-  }
-  if ((changed & BS_SETTINGS_RELOAD_TRAY_WATCHER_CHANGED) != 0) {
-    bs_settings_service_append_key(out->restart_required_keys, "shell.tray_watcher_name");
-  }
-  if ((changed & BS_SETTINGS_RELOAD_PRIMARY_OUTPUT_CHANGED) != 0) {
-    bs_settings_service_append_key(out->restart_required_keys, "shell.primary_output");
-  }
-  if ((changed & BS_SETTINGS_RELOAD_BAR_CHANGED) != 0) {
-    bs_settings_service_append_key(out->restart_required_keys, "bar.*");
-  }
-  if ((changed & BS_SETTINGS_RELOAD_LAUNCHPAD_CHANGED) != 0) {
-    bs_settings_service_append_key(out->restart_required_keys, "launchpad.*");
-  }
+  (void) error;
+  g_return_val_if_fail(service != NULL, false);
+  g_return_val_if_fail(plan != NULL, false);
 
+  bs_shell_config_copy(&committed, &plan->next_config);
   bs_shell_config_clear(&service->shell_config);
-  service->shell_config = parsed_config;
+  service->shell_config = committed;
+  if (out != NULL) {
+    out->changed = plan->changed;
+    out->config_loaded = true;
+  }
   return true;
 }
 
