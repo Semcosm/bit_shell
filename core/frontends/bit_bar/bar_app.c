@@ -27,6 +27,7 @@ typedef struct {
 struct _BsBarApp {
   GtkApplication *gtk_app;
   GtkWindow *window;
+  GtkWidget *surface_box;
   GtkWidget *root_box;
   GtkWidget *content_box;
   GtkWidget *left_box;
@@ -311,10 +312,15 @@ bs_bar_app_ensure_window(BsBarApp *app) {
   bs_bar_app_configure_window(app);
   gtk_widget_add_css_class(GTK_WIDGET(app->window), "bit-bar-window");
 
+  app->surface_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
   app->root_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
   app->content_box = gtk_center_box_new();
-  gtk_widget_add_css_class(app->root_box, "bit-bar-root");
+  gtk_widget_add_css_class(app->surface_box, "bit-bar-root");
+  gtk_widget_add_css_class(app->root_box, "bit-bar-content");
+  gtk_widget_set_hexpand(app->surface_box, true);
+  gtk_widget_set_halign(app->surface_box, GTK_ALIGN_FILL);
   gtk_widget_set_hexpand(app->root_box, true);
+  gtk_widget_set_halign(app->root_box, GTK_ALIGN_FILL);
   gtk_widget_set_hexpand(app->content_box, true);
   gtk_widget_set_halign(app->content_box, GTK_ALIGN_FILL);
   gtk_orientable_set_orientation(GTK_ORIENTABLE(app->content_box), GTK_ORIENTATION_HORIZONTAL);
@@ -369,10 +375,11 @@ bs_bar_app_ensure_window(BsBarApp *app) {
   gtk_center_box_set_start_widget(GTK_CENTER_BOX(app->content_box), app->left_box);
   gtk_center_box_set_center_widget(GTK_CENTER_BOX(app->content_box), app->center_box);
   gtk_center_box_set_end_widget(GTK_CENTER_BOX(app->content_box), app->right_box);
+  gtk_box_append(GTK_BOX(app->surface_box), app->root_box);
   gtk_box_append(GTK_BOX(app->root_box), app->content_box);
   bs_bar_app_apply_metrics(app, &app->metrics);
 
-  gtk_window_set_child(app->window, app->root_box);
+  gtk_window_set_child(app->window, app->surface_box);
 }
 
 static void
