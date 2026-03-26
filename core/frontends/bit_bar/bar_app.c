@@ -35,6 +35,8 @@ struct _BsBarApp {
   GtkWidget *center_box;
   GtkWidget *right_box;
   GtkWidget *title_button;
+  GtkWidget *title_button_box;
+  GtkWidget *title_app_badge;
   GtkWidget *title_label;
   GtkWidget *title_popover;
   GtkWidget *title_list_box;
@@ -69,7 +71,12 @@ static GtkWidget *bs_bar_app_build_empty_capsule(BsBarApp *app,
                                                  const char *css_role,
                                                  int min_width,
                                                  int min_height);
+static void bs_bar_app_compute_center_display(BsBarApp *app,
+                                              const char **out_badge,
+                                              const char **out_title,
+                                              gboolean *out_interactive);
 static void bs_bar_app_build_center_placeholder(BsBarApp *app,
+                                                const char *badge,
                                                 const char *text,
                                                 bool interactive);
 static GtkWidget *bs_bar_app_build_workspace_button(BsBarApp *app,
@@ -234,17 +241,65 @@ bs_bar_app_build_empty_capsule(BsBarApp *app, const char *css_role, int min_widt
 }
 
 static void
-bs_bar_app_build_center_placeholder(BsBarApp *app, const char *text, bool interactive) {
+bs_bar_app_compute_center_display(BsBarApp *app,
+                                  const char **out_badge,
+                                  const char **out_title,
+                                  gboolean *out_interactive) {
+  BsBarVmCenterState state = BS_BAR_VM_CENTER_CONNECTING;
+  const char *title = NULL;
+  const char *app_name = NULL;
+
   g_return_if_fail(app != NULL);
+  g_return_if_fail(out_badge != NULL);
+  g_return_if_fail(out_title != NULL);
+  g_return_if_fail(out_interactive != NULL);
+
+  *out_badge = NULL;
+  *out_title = "Connecting";
+  *out_interactive = FALSE;
+
+  state = bs_bar_view_model_center_state(app->view_model);
+  if (state == BS_BAR_VM_CENTER_CONNECTING) {
+    return;
+  }
+  if (state == BS_BAR_VM_CENTER_SYNCING_WINDOWS) {
+    *out_title = "Syncing windows";
+    return;
+  }
+  if (state == BS_BAR_VM_CENTER_READY_NO_FOCUSED_WINDOW) {
+    *out_title = "No focused window";
+    return;
+  }
+
+  title = bs_bar_view_model_focused_title(app->view_model);
+  app_name = bs_bar_view_model_focused_app_name(app->view_model);
+  *out_badge = app_name != NULL && *app_name != '\0' ? app_name : NULL;
+  *out_title = title != NULL && *title != '\0' ? title : "No focused window";
+  *out_interactive = bs_bar_view_model_can_open_window_list(app->view_model);
+}
+
+static void
+bs_bar_app_build_center_placeholder(BsBarApp *app, const char *badge, const char *text, bool interactive) {
+  g_return_if_fail(app != NULL);
+  g_return_if_fail(app->title_app_badge != NULL);
   g_return_if_fail(app->title_label != NULL);
   g_return_if_fail(app->title_button != NULL);
 
+  if (badge != NULL && *badge != '\0') {
+    gtk_label_set_text(GTK_LABEL(app->title_app_badge), badge);
+    gtk_widget_set_visible(app->title_app_badge, true);
+  } else {
+    gtk_label_set_text(GTK_LABEL(app->title_app_badge), "");
+    gtk_widget_set_visible(app->title_app_badge, false);
+  }
   gtk_label_set_text(GTK_LABEL(app->title_label), text != NULL ? text : "");
   gtk_widget_set_sensitive(app->title_button, interactive);
   if (interactive) {
     gtk_widget_remove_css_class(app->title_button, "bit-bar-segment-disabled");
+    gtk_widget_remove_css_class(app->title_label, "bit-bar-title-placeholder");
   } else {
     gtk_widget_add_css_class(app->title_button, "bit-bar-segment-disabled");
+    gtk_widget_add_css_class(app->title_label, "bit-bar-title-placeholder");
     if (app->title_popover != NULL) {
       gtk_popover_popdown(GTK_POPOVER(app->title_popover));
     }
@@ -314,15 +369,17 @@ bs_bar_app_apply_metrics(BsBarApp *app, const BsBarMetrics *metrics) {
     gtk_widget_set_size_request(app->title_button, -1, metrics->title_min_height);
     gtk_widget_set_hexpand(app->title_button, false);
   }
+  if (app->title_button_box != NULL) {
+    gtk_box_set_spacing(GTK_BOX(app->title_button_box), metrics->title_list_gap);
+  }
+  if (app->title_app_badge != NULL) {
+    gtk_widget_set_size_request(app->title_app_badge, -1, metrics->title_min_height);
+  }
   if (app->center_box != NULL) {
     gtk_widget_set_size_request(app->center_box, -1, metrics->title_min_height);
   }
-  if (app->title_button != NULL) {
-    GtkWidget *title_label = gtk_button_get_child(GTK_BUTTON(app->title_button));
-
-    if (GTK_IS_LABEL(title_label)) {
-      gtk_label_set_max_width_chars(GTK_LABEL(title_label), metrics->center_max_width_chars);
-    }
+  if (app->title_label != NULL) {
+    gtk_label_set_max_width_chars(GTK_LABEL(app->title_label), metrics->center_max_width_chars);
   }
   if (app->clock_widget != NULL) {
     gtk_widget_set_size_request(bs_clock_widget_root(app->clock_widget),
@@ -400,6 +457,8 @@ bs_bar_app_ensure_window(BsBarApp *app) {
   app->center_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   app->right_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   app->title_button = gtk_button_new();
+  app->title_button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+  app->title_app_badge = gtk_label_new(NULL);
   app->title_label = gtk_label_new("Connecting");
   app->title_popover = gtk_popover_new();
   app->title_list_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -411,7 +470,10 @@ bs_bar_app_ensure_window(BsBarApp *app) {
   gtk_widget_add_css_class(app->center_box, "bit-bar-center");
   gtk_widget_add_css_class(app->right_box, "bit-bar-right");
   gtk_widget_add_css_class(app->title_button, "bit-bar-title-button");
+  gtk_widget_add_css_class(app->title_button_box, "bit-bar-title-content");
+  gtk_widget_add_css_class(app->title_app_badge, "bit-bar-title-badge");
   gtk_widget_add_css_class(app->title_label, "bit-bar-title-label");
+  gtk_widget_add_css_class(app->title_label, "bit-bar-title-text");
   gtk_widget_add_css_class(app->title_list_box, "bit-bar-title-list");
   gtk_widget_add_css_class(app->tray_strip_box, "bit-bar-tray-strip");
 
@@ -421,19 +483,21 @@ bs_bar_app_ensure_window(BsBarApp *app) {
   gtk_widget_set_hexpand(app->left_box, false);
   gtk_widget_set_hexpand(app->center_box, false);
   gtk_widget_set_hexpand(app->right_box, false);
-  if (GTK_IS_LABEL(gtk_button_get_child(GTK_BUTTON(app->title_button)))) {
-    GtkWidget *title_label = gtk_button_get_child(GTK_BUTTON(app->title_button));
-
-    gtk_label_set_ellipsize(GTK_LABEL(title_label), PANGO_ELLIPSIZE_END);
-    gtk_label_set_single_line_mode(GTK_LABEL(title_label), true);
-    gtk_label_set_wrap(GTK_LABEL(title_label), false);
-    gtk_label_set_xalign(GTK_LABEL(title_label), 0.5f);
-  }
+  gtk_widget_set_hexpand(app->title_button_box, false);
+  gtk_widget_set_halign(app->title_button_box, GTK_ALIGN_CENTER);
+  gtk_label_set_ellipsize(GTK_LABEL(app->title_app_badge), PANGO_ELLIPSIZE_END);
+  gtk_label_set_single_line_mode(GTK_LABEL(app->title_app_badge), true);
+  gtk_label_set_wrap(GTK_LABEL(app->title_app_badge), false);
+  gtk_label_set_xalign(GTK_LABEL(app->title_app_badge), 0.5f);
   gtk_label_set_ellipsize(GTK_LABEL(app->title_label), PANGO_ELLIPSIZE_END);
   gtk_label_set_single_line_mode(GTK_LABEL(app->title_label), true);
   gtk_label_set_wrap(GTK_LABEL(app->title_label), false);
   gtk_label_set_xalign(GTK_LABEL(app->title_label), 0.5f);
-  gtk_button_set_child(GTK_BUTTON(app->title_button), app->title_label);
+  gtk_widget_set_hexpand(app->title_label, true);
+  gtk_widget_set_halign(app->title_label, GTK_ALIGN_START);
+  gtk_box_append(GTK_BOX(app->title_button_box), app->title_app_badge);
+  gtk_box_append(GTK_BOX(app->title_button_box), app->title_label);
+  gtk_button_set_child(GTK_BUTTON(app->title_button), app->title_button_box);
 
   gtk_widget_set_parent(app->title_popover, app->title_button);
   gtk_popover_set_position(GTK_POPOVER(app->title_popover), GTK_POS_BOTTOM);
@@ -545,10 +609,9 @@ bs_bar_app_render_left_from_vm(BsBarApp *app) {
 
 static void
 bs_bar_app_render_center_from_vm(BsBarApp *app) {
-  BsBarVmCenterState state = BS_BAR_VM_CENTER_CONNECTING;
+  const char *badge = NULL;
   const char *title = NULL;
-  const char *app_name = NULL;
-  g_autofree char *text = NULL;
+  gboolean interactive = FALSE;
 
   g_return_if_fail(app != NULL);
 
@@ -556,32 +619,9 @@ bs_bar_app_render_center_from_vm(BsBarApp *app) {
     return;
   }
 
-  state = bs_bar_view_model_center_state(app->view_model);
-  if (state == BS_BAR_VM_CENTER_CONNECTING) {
-    bs_bar_app_build_center_placeholder(app, "Connecting", false);
-    return;
-  }
-  if (state == BS_BAR_VM_CENTER_SYNCING_WINDOWS) {
-    bs_bar_app_build_center_placeholder(app, "Syncing windows", false);
-    return;
-  }
-  if (state == BS_BAR_VM_CENTER_READY_NO_FOCUSED_WINDOW) {
-    bs_bar_app_build_center_placeholder(app, "No focused window", false);
-    return;
-  }
-
-  title = bs_bar_view_model_focused_title(app->view_model);
-  app_name = bs_bar_view_model_focused_app_name(app->view_model);
-  if (app_name != NULL && *app_name != '\0') {
-    text = g_strdup_printf("%s  %s",
-                           app_name,
-                           title != NULL ? title : "No focused window");
-  } else {
-    text = g_strdup(title != NULL ? title : "No focused window");
-  }
-  bs_bar_app_build_center_placeholder(app, text, bs_bar_view_model_can_open_window_list(app->view_model));
-  if (bs_bar_view_model_can_open_window_list(app->view_model)
-      && gtk_widget_get_visible(app->title_popover)) {
+  bs_bar_app_compute_center_display(app, &badge, &title, &interactive);
+  bs_bar_app_build_center_placeholder(app, badge, title, interactive);
+  if (interactive && gtk_widget_get_visible(app->title_popover)) {
     bs_bar_app_rebuild_title_popover(app);
   }
 }
@@ -673,9 +713,11 @@ bs_bar_app_build_workspace_button(BsBarApp *app, const BsBarWorkspaceStripItem *
 static GtkWidget *
 bs_bar_app_build_window_candidate_row(BsBarApp *app, const BsBarWindowCandidate *item) {
   GtkWidget *button = NULL;
+  GtkWidget *content = NULL;
+  GtkWidget *title_label = NULL;
+  GtkWidget *subtitle_label = NULL;
   const char *title = NULL;
   const char *subtitle = NULL;
-  g_autofree char *label = NULL;
 
   g_return_val_if_fail(app != NULL, NULL);
   g_return_val_if_fail(item != NULL, NULL);
@@ -684,12 +726,28 @@ bs_bar_app_build_window_candidate_row(BsBarApp *app, const BsBarWindowCandidate 
   subtitle = item->desktop_id != NULL && *item->desktop_id != '\0'
                ? item->desktop_id
                : (item->app_id != NULL ? item->app_id : "");
-  label = g_strdup_printf("%s\n%s", title, subtitle);
-  button = gtk_button_new_with_label(label);
+  button = gtk_button_new();
+  content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+  title_label = gtk_label_new(title);
+  subtitle_label = gtk_label_new(subtitle);
   gtk_widget_add_css_class(button, "bit-bar-window-candidate");
+  gtk_widget_add_css_class(content, "bit-bar-window-candidate-content");
+  gtk_widget_add_css_class(title_label, "bit-bar-window-candidate-title");
+  gtk_widget_add_css_class(subtitle_label, "bit-bar-window-candidate-subtitle");
   if (item->focused) {
     gtk_widget_add_css_class(button, "is-focused");
   }
+  gtk_label_set_ellipsize(GTK_LABEL(title_label), PANGO_ELLIPSIZE_END);
+  gtk_label_set_single_line_mode(GTK_LABEL(title_label), true);
+  gtk_label_set_xalign(GTK_LABEL(title_label), 0.0f);
+  gtk_label_set_ellipsize(GTK_LABEL(subtitle_label), PANGO_ELLIPSIZE_END);
+  gtk_label_set_single_line_mode(GTK_LABEL(subtitle_label), true);
+  gtk_label_set_xalign(GTK_LABEL(subtitle_label), 0.0f);
+  gtk_widget_set_halign(content, GTK_ALIGN_FILL);
+  gtk_widget_set_hexpand(content, true);
+  gtk_box_append(GTK_BOX(content), title_label);
+  gtk_box_append(GTK_BOX(content), subtitle_label);
+  gtk_button_set_child(GTK_BUTTON(button), content);
   gtk_widget_set_size_request(button, -1, app->metrics.title_min_height);
   g_object_set_data_full(G_OBJECT(button), "bs-bar-window-id", g_strdup(item->window_id), g_free);
   g_signal_connect(button,
