@@ -53,13 +53,25 @@ struct _BsNiriBackend {
 typedef struct {
   bool saw_initial_workspaces;
   bool saw_initial_windows;
+  bool used_fallback;
 } BsNiriBootstrapState;
+
+typedef enum {
+  BS_NIRI_BOOL_UPDATE_KEEP = -1,
+  BS_NIRI_BOOL_UPDATE_FALSE = 0,
+  BS_NIRI_BOOL_UPDATE_TRUE = 1,
+} BsNiriBoolUpdate;
 
 static const char *bs_niri_backend_resolve_socket_path(BsNiriBackend *backend);
 static void bs_niri_backend_close_event_connection(BsNiriBackend *backend);
 static void bs_niri_backend_cancel_reconnect(BsNiriBackend *backend);
 static void bs_niri_backend_schedule_reconnect(BsNiriBackend *backend);
 static gboolean bs_niri_backend_reconnect_cb(gpointer user_data);
+static void bs_niri_backend_update_readiness(BsNiriBackend *backend,
+                                             BsNiriBoolUpdate outputs_ready,
+                                             BsNiriBoolUpdate workspaces_ready,
+                                             BsNiriBoolUpdate windows_ready,
+                                             BsNiriBoolUpdate bootstrap_used_fallback);
 static bool bs_niri_backend_connect_event_stream(BsNiriBackend *backend, GError **error);
 static bool bs_niri_backend_prime_initial_state(BsNiriBackend *backend, GError **error);
 static bool bs_niri_backend_read_initial_event_line(BsNiriBackend *backend,
@@ -67,6 +79,15 @@ static bool bs_niri_backend_read_initial_event_line(BsNiriBackend *backend,
                                                     gint64 timeout_us,
                                                     GError **error);
 static bool bs_niri_backend_refresh_outputs(BsNiriBackend *backend, GError **error);
+static bool bs_niri_backend_refresh_workspaces(BsNiriBackend *backend,
+                                               BsNiriBootstrapState *state,
+                                               GError **error);
+static bool bs_niri_backend_refresh_windows(BsNiriBackend *backend,
+                                            BsNiriBootstrapState *state,
+                                            GError **error);
+static bool bs_niri_backend_fill_missing_initial_topics(BsNiriBackend *backend,
+                                                        BsNiriBootstrapState *state,
+                                                        GError **error);
 static GSocketConnection *bs_niri_backend_open_connection(BsNiriBackend *backend, GError **error);
 static bool bs_niri_backend_write_request(GOutputStream *output, const char *request, GError **error);
 static char *bs_niri_backend_read_reply_line(GInputStream *input, GError **error);
@@ -90,6 +111,12 @@ static JsonObject *bs_json_object_get_nested_object(JsonObject *object, const ch
 static bool bs_niri_backend_parse_output(JsonObject *object, BsOutput *output_out);
 static bool bs_niri_backend_parse_workspace(JsonObject *object, BsWorkspace *workspace_out);
 static bool bs_niri_backend_parse_window(BsNiriBackend *backend, JsonObject *object, BsWindow *window_out);
+static void bs_niri_backend_apply_workspaces_array(BsNiriBackend *backend,
+                                                   JsonArray *array,
+                                                   BsNiriBootstrapState *bootstrap_state);
+static void bs_niri_backend_apply_windows_array(BsNiriBackend *backend,
+                                                JsonArray *array,
+                                                BsNiriBootstrapState *bootstrap_state);
 static char *bs_niri_backend_dup_id_string(JsonObject *object, const char *member_name);
 static bool bs_niri_backend_parse_timestamp_ns(JsonObject *object,
                                                const char *member_name,
@@ -116,6 +143,41 @@ bs_niri_backend_resolve_socket_path(BsNiriBackend *backend) {
 
   env_path = g_getenv("NIRI_SOCKET");
   return env_path != NULL && *env_path != '\0' ? env_path : NULL;
+}
+
+static void
+bs_niri_backend_update_readiness(BsNiriBackend *backend,
+                                 BsNiriBoolUpdate outputs_ready,
+                                 BsNiriBoolUpdate workspaces_ready,
+                                 BsNiriBoolUpdate windows_ready,
+                                 BsNiriBoolUpdate bootstrap_used_fallback) {
+  const BsShellState *shell = NULL;
+  bool next_outputs_ready = false;
+  bool next_workspaces_ready = false;
+  bool next_windows_ready = false;
+  bool next_bootstrap_used_fallback = false;
+
+  g_return_if_fail(backend != NULL);
+
+  shell = &bs_state_store_snapshot(backend->store)->shell;
+  next_outputs_ready = outputs_ready == BS_NIRI_BOOL_UPDATE_KEEP
+                         ? shell->outputs_ready
+                         : outputs_ready == BS_NIRI_BOOL_UPDATE_TRUE;
+  next_workspaces_ready = workspaces_ready == BS_NIRI_BOOL_UPDATE_KEEP
+                            ? shell->workspaces_ready
+                            : workspaces_ready == BS_NIRI_BOOL_UPDATE_TRUE;
+  next_windows_ready = windows_ready == BS_NIRI_BOOL_UPDATE_KEEP
+                         ? shell->windows_ready
+                         : windows_ready == BS_NIRI_BOOL_UPDATE_TRUE;
+  next_bootstrap_used_fallback = bootstrap_used_fallback == BS_NIRI_BOOL_UPDATE_KEEP
+                                   ? shell->bootstrap_used_fallback
+                                   : bootstrap_used_fallback == BS_NIRI_BOOL_UPDATE_TRUE;
+
+  bs_state_store_set_niri_readiness(backend->store,
+                                    next_outputs_ready,
+                                    next_workspaces_ready,
+                                    next_windows_ready,
+                                    next_bootstrap_used_fallback);
 }
 
 BsNiriBackend *
@@ -202,31 +264,32 @@ bs_niri_backend_reconnect_cb(gpointer user_data) {
   if (!bs_niri_backend_connect_event_stream(backend, &error)) {
     g_warning("[bit_shelld] niri reconnect failed: %s",
               error != NULL ? error->message : "unknown error");
+    bs_state_store_begin_update(backend->store);
     bs_state_store_set_shell_connection_state(backend->store,
                                               false,
                                               error != NULL ? error->message : "niri reconnect failed");
+    bs_state_store_set_niri_readiness(backend->store, false, false, false, false);
+    bs_state_store_finish_update(backend->store);
     bs_niri_backend_schedule_reconnect(backend);
     return G_SOURCE_REMOVE;
   }
 
+  bs_state_store_set_shell_connection_state(backend->store, true, NULL);
+
   if (!bs_niri_backend_prime_initial_state(backend, &error)) {
-    if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT)) {
-      g_warning("[bit_shelld] niri bootstrap incomplete after reconnect: %s",
-                error != NULL ? error->message : "unknown error");
-      g_clear_error(&error);
-    } else {
-      g_warning("[bit_shelld] niri reconnect bootstrap failed: %s",
-                error != NULL ? error->message : "unknown error");
-      bs_niri_backend_close_event_connection(backend);
-      bs_state_store_set_shell_connection_state(backend->store,
-                                                false,
-                                                error != NULL ? error->message : "niri reconnect bootstrap failed");
-      bs_niri_backend_schedule_reconnect(backend);
-      return G_SOURCE_REMOVE;
-    }
+    g_warning("[bit_shelld] niri reconnect bootstrap failed: %s",
+              error != NULL ? error->message : "unknown error");
+    bs_niri_backend_close_event_connection(backend);
+    bs_state_store_begin_update(backend->store);
+    bs_state_store_set_shell_connection_state(backend->store,
+                                              false,
+                                              error != NULL ? error->message : "niri reconnect bootstrap failed");
+    bs_state_store_set_niri_readiness(backend->store, false, false, false, false);
+    bs_state_store_finish_update(backend->store);
+    bs_niri_backend_schedule_reconnect(backend);
+    return G_SOURCE_REMOVE;
   }
 
-  bs_state_store_set_shell_connection_state(backend->store, true, NULL);
   bs_niri_backend_begin_read(backend);
   g_message("[bit_shelld] niri event-stream connected");
   return G_SOURCE_REMOVE;
@@ -713,10 +776,232 @@ bs_niri_backend_refresh_outputs(BsNiriBackend *backend, GError **error) {
 
   bs_state_store_begin_update(backend->store);
   bs_state_store_replace_outputs(backend->store, outputs);
+  bs_niri_backend_update_readiness(backend,
+                                   BS_NIRI_BOOL_UPDATE_TRUE,
+                                   BS_NIRI_BOOL_UPDATE_KEEP,
+                                   BS_NIRI_BOOL_UPDATE_KEEP,
+                                   BS_NIRI_BOOL_UPDATE_KEEP);
   bs_state_store_finish_update(backend->store);
   if (root != NULL) {
     json_node_unref(root);
   }
+  return true;
+}
+
+static void
+bs_niri_backend_apply_workspaces_array(BsNiriBackend *backend,
+                                       JsonArray *array,
+                                       BsNiriBootstrapState *bootstrap_state) {
+  g_autoptr(GPtrArray) workspaces = g_ptr_array_new_with_free_func(bs_niri_backend_free_workspace_ptr);
+
+  g_return_if_fail(backend != NULL);
+  g_return_if_fail(array != NULL);
+
+  if (bootstrap_state != NULL) {
+    bootstrap_state->saw_initial_workspaces = true;
+  }
+
+  for (guint i = 0; i < json_array_get_length(array); i++) {
+    BsWorkspace *workspace = g_new0(BsWorkspace, 1);
+    if (!bs_niri_backend_parse_workspace(json_array_get_object_element(array, i), workspace)) {
+      bs_workspace_clear(workspace);
+      g_free(workspace);
+      continue;
+    }
+    g_ptr_array_add(workspaces, workspace);
+  }
+
+  bs_state_store_begin_update(backend->store);
+  bs_state_store_replace_workspaces(backend->store, workspaces);
+  bs_niri_backend_update_readiness(backend,
+                                   BS_NIRI_BOOL_UPDATE_KEEP,
+                                   BS_NIRI_BOOL_UPDATE_TRUE,
+                                   BS_NIRI_BOOL_UPDATE_KEEP,
+                                   bootstrap_state != NULL && bootstrap_state->used_fallback
+                                     ? BS_NIRI_BOOL_UPDATE_TRUE
+                                     : BS_NIRI_BOOL_UPDATE_KEEP);
+  bs_state_store_finish_update(backend->store);
+}
+
+static void
+bs_niri_backend_apply_windows_array(BsNiriBackend *backend,
+                                    JsonArray *array,
+                                    BsNiriBootstrapState *bootstrap_state) {
+  g_autoptr(GPtrArray) windows = g_ptr_array_new_with_free_func(bs_niri_backend_free_window_ptr);
+
+  g_return_if_fail(backend != NULL);
+  g_return_if_fail(array != NULL);
+
+  if (bootstrap_state != NULL) {
+    bootstrap_state->saw_initial_windows = true;
+  }
+
+  for (guint i = 0; i < json_array_get_length(array); i++) {
+    BsWindow *window = g_new0(BsWindow, 1);
+    if (!bs_niri_backend_parse_window(backend, json_array_get_object_element(array, i), window)) {
+      bs_window_clear(window);
+      g_free(window);
+      continue;
+    }
+    g_ptr_array_add(windows, window);
+  }
+
+  bs_state_store_begin_update(backend->store);
+  bs_state_store_replace_windows(backend->store, windows);
+  bs_niri_backend_update_readiness(backend,
+                                   BS_NIRI_BOOL_UPDATE_KEEP,
+                                   BS_NIRI_BOOL_UPDATE_KEEP,
+                                   BS_NIRI_BOOL_UPDATE_TRUE,
+                                   bootstrap_state != NULL && bootstrap_state->used_fallback
+                                     ? BS_NIRI_BOOL_UPDATE_TRUE
+                                     : BS_NIRI_BOOL_UPDATE_KEEP);
+  bs_state_store_finish_update(backend->store);
+}
+
+static bool
+bs_niri_backend_refresh_workspaces(BsNiriBackend *backend,
+                                   BsNiriBootstrapState *state,
+                                   GError **error) {
+  JsonNode *root = NULL;
+  JsonObject *ok_object = NULL;
+  JsonNode *workspaces_node = NULL;
+
+  g_return_val_if_fail(backend != NULL, false);
+
+  if (!bs_niri_backend_request(backend, "\"Workspaces\"", &root, error)) {
+    return false;
+  }
+
+  ok_object = bs_niri_backend_reply_ok_object(root, "Workspaces", error);
+  if (ok_object == NULL) {
+    if (root != NULL) {
+      json_node_unref(root);
+    }
+    return false;
+  }
+  if (!json_object_has_member(ok_object, "Workspaces")) {
+    g_set_error(error,
+                G_IO_ERROR,
+                G_IO_ERROR_INVALID_DATA,
+                "niri Workspaces reply missing Workspaces field");
+    if (root != NULL) {
+      json_node_unref(root);
+    }
+    return false;
+  }
+
+  workspaces_node = json_object_get_member(ok_object, "Workspaces");
+  if (workspaces_node == NULL || !JSON_NODE_HOLDS_ARRAY(workspaces_node)) {
+    g_set_error(error,
+                G_IO_ERROR,
+                G_IO_ERROR_INVALID_DATA,
+                "niri Workspaces reply has unsupported Workspaces payload type");
+    if (root != NULL) {
+      json_node_unref(root);
+    }
+    return false;
+  }
+
+  bs_niri_backend_apply_workspaces_array(backend, json_node_get_array(workspaces_node), state);
+  if (root != NULL) {
+    json_node_unref(root);
+  }
+  return true;
+}
+
+static bool
+bs_niri_backend_refresh_windows(BsNiriBackend *backend,
+                                BsNiriBootstrapState *state,
+                                GError **error) {
+  JsonNode *root = NULL;
+  JsonObject *ok_object = NULL;
+  JsonNode *windows_node = NULL;
+
+  g_return_val_if_fail(backend != NULL, false);
+
+  if (!bs_niri_backend_request(backend, "\"Windows\"", &root, error)) {
+    return false;
+  }
+
+  ok_object = bs_niri_backend_reply_ok_object(root, "Windows", error);
+  if (ok_object == NULL) {
+    if (root != NULL) {
+      json_node_unref(root);
+    }
+    return false;
+  }
+  if (!json_object_has_member(ok_object, "Windows")) {
+    g_set_error(error,
+                G_IO_ERROR,
+                G_IO_ERROR_INVALID_DATA,
+                "niri Windows reply missing Windows field");
+    if (root != NULL) {
+      json_node_unref(root);
+    }
+    return false;
+  }
+
+  windows_node = json_object_get_member(ok_object, "Windows");
+  if (windows_node == NULL || !JSON_NODE_HOLDS_ARRAY(windows_node)) {
+    g_set_error(error,
+                G_IO_ERROR,
+                G_IO_ERROR_INVALID_DATA,
+                "niri Windows reply has unsupported Windows payload type");
+    if (root != NULL) {
+      json_node_unref(root);
+    }
+    return false;
+  }
+
+  bs_niri_backend_apply_windows_array(backend, json_node_get_array(windows_node), state);
+  if (root != NULL) {
+    json_node_unref(root);
+  }
+  return true;
+}
+
+static bool
+bs_niri_backend_fill_missing_initial_topics(BsNiriBackend *backend,
+                                            BsNiriBootstrapState *state,
+                                            GError **error) {
+  g_return_val_if_fail(backend != NULL, false);
+  g_return_val_if_fail(state != NULL, false);
+
+  if (!state->saw_initial_workspaces) {
+    g_autoptr(GError) local_error = NULL;
+
+    g_message("[bit_shelld] niri bootstrap timed out waiting for initial WorkspacesChanged, trying fallback request");
+    state->used_fallback = true;
+    if (!bs_niri_backend_refresh_workspaces(backend, state, &local_error)) {
+      g_prefix_error(&local_error, "niri Workspaces fallback failed: ");
+      g_propagate_error(error, g_steal_pointer(&local_error));
+      return false;
+    }
+  }
+
+  if (!state->saw_initial_windows) {
+    g_autoptr(GError) local_error = NULL;
+
+    g_message("[bit_shelld] niri bootstrap timed out waiting for initial WindowsChanged, trying fallback request");
+    state->used_fallback = true;
+    if (!bs_niri_backend_refresh_windows(backend, state, &local_error)) {
+      g_prefix_error(&local_error, "niri Windows fallback failed: ");
+      g_propagate_error(error, g_steal_pointer(&local_error));
+      return false;
+    }
+  }
+
+  if (state->used_fallback) {
+    bs_state_store_begin_update(backend->store);
+    bs_niri_backend_update_readiness(backend,
+                                     BS_NIRI_BOOL_UPDATE_KEEP,
+                                     BS_NIRI_BOOL_UPDATE_KEEP,
+                                     BS_NIRI_BOOL_UPDATE_KEEP,
+                                     BS_NIRI_BOOL_UPDATE_TRUE);
+    bs_state_store_finish_update(backend->store);
+    g_message("[bit_shelld] niri bootstrap completed after fallback request(s)");
+  }
+
   return true;
 }
 
@@ -775,6 +1060,7 @@ bs_niri_backend_prime_initial_state(BsNiriBackend *backend, GError **error) {
   g_return_val_if_fail(backend->event_input != NULL, false);
 
   deadline_us = g_get_monotonic_time() + BS_NIRI_BOOTSTRAP_TIMEOUT_US;
+  bs_state_store_begin_bootstrap(backend->store);
   while (!state.saw_initial_workspaces || !state.saw_initial_windows) {
     g_autoptr(GError) local_error = NULL;
     gint64 remaining_us = deadline_us - g_get_monotonic_time();
@@ -789,9 +1075,19 @@ bs_niri_backend_prime_initial_state(BsNiriBackend *backend, GError **error) {
       }
 
       g_propagate_error(error, g_steal_pointer(&local_error));
+      bs_state_store_finish_bootstrap(backend->store);
       return false;
     }
   }
+
+  if (!state.saw_initial_workspaces || !state.saw_initial_windows) {
+    if (!bs_niri_backend_fill_missing_initial_topics(backend, &state, error)) {
+      bs_state_store_finish_bootstrap(backend->store);
+      return false;
+    }
+  }
+
+  bs_state_store_finish_bootstrap(backend->store);
 
   if (!state.saw_initial_workspaces || !state.saw_initial_windows) {
     g_set_error(error,
@@ -891,7 +1187,10 @@ bs_niri_backend_on_read_line(GObject *source_object,
     const char *message = error != NULL ? error->message : "niri event-stream closed";
     g_warning("[bit_shelld] niri event-stream disconnected: %s", message);
     bs_niri_backend_close_event_connection(backend);
+    bs_state_store_begin_update(backend->store);
     bs_state_store_set_shell_connection_state(backend->store, false, message);
+    bs_state_store_set_niri_readiness(backend->store, false, false, false, false);
+    bs_state_store_finish_update(backend->store);
     bs_niri_backend_schedule_reconnect(backend);
     return;
   }
@@ -933,25 +1232,7 @@ bs_niri_backend_apply_event(BsNiriBackend *backend,
   if (json_object_has_member(root_object, "WorkspacesChanged")) {
     JsonObject *event = json_object_get_object_member(root_object, "WorkspacesChanged");
     JsonArray *array = json_object_get_array_member(event, "workspaces");
-    g_autoptr(GPtrArray) workspaces = g_ptr_array_new_with_free_func(bs_niri_backend_free_workspace_ptr);
-
-    if (bootstrap_state != NULL) {
-      bootstrap_state->saw_initial_workspaces = true;
-    }
-
-    for (guint i = 0; i < json_array_get_length(array); i++) {
-      BsWorkspace *workspace = g_new0(BsWorkspace, 1);
-      if (!bs_niri_backend_parse_workspace(json_array_get_object_element(array, i), workspace)) {
-        bs_workspace_clear(workspace);
-        g_free(workspace);
-        continue;
-      }
-      g_ptr_array_add(workspaces, workspace);
-    }
-
-    bs_state_store_begin_update(backend->store);
-    bs_state_store_replace_workspaces(backend->store, workspaces);
-    bs_state_store_finish_update(backend->store);
+    bs_niri_backend_apply_workspaces_array(backend, array, bootstrap_state);
     json_node_unref(root);
     return true;
   }
@@ -988,25 +1269,7 @@ bs_niri_backend_apply_event(BsNiriBackend *backend,
   if (json_object_has_member(root_object, "WindowsChanged")) {
     JsonObject *event = json_object_get_object_member(root_object, "WindowsChanged");
     JsonArray *array = json_object_get_array_member(event, "windows");
-    g_autoptr(GPtrArray) windows = g_ptr_array_new_with_free_func(bs_niri_backend_free_window_ptr);
-
-    if (bootstrap_state != NULL) {
-      bootstrap_state->saw_initial_windows = true;
-    }
-
-    for (guint i = 0; i < json_array_get_length(array); i++) {
-      BsWindow *window = g_new0(BsWindow, 1);
-      if (!bs_niri_backend_parse_window(backend, json_array_get_object_element(array, i), window)) {
-        bs_window_clear(window);
-        g_free(window);
-        continue;
-      }
-      g_ptr_array_add(windows, window);
-    }
-
-    bs_state_store_begin_update(backend->store);
-    bs_state_store_replace_windows(backend->store, windows);
-    bs_state_store_finish_update(backend->store);
+    bs_niri_backend_apply_windows_array(backend, array, bootstrap_state);
     json_node_unref(root);
     return true;
   }
@@ -1095,7 +1358,10 @@ bs_niri_backend_start(BsNiriBackend *backend, GError **error) {
   backend->running = true;
   if (!bs_niri_backend_connect_event_stream(backend, &local_error)) {
     const char *message = local_error != NULL ? local_error->message : "niri connect failed";
+    bs_state_store_begin_update(backend->store);
     bs_state_store_set_shell_connection_state(backend->store, false, message);
+    bs_state_store_set_niri_readiness(backend->store, false, false, false, false);
+    bs_state_store_finish_update(backend->store);
     g_warning("[bit_shelld] niri backend start degraded: %s", message);
     bs_niri_backend_schedule_reconnect(backend);
     if (error != NULL && local_error != NULL) {
@@ -1104,27 +1370,23 @@ bs_niri_backend_start(BsNiriBackend *backend, GError **error) {
     return true;
   }
 
+  bs_state_store_set_shell_connection_state(backend->store, true, NULL);
+
   if (!bs_niri_backend_prime_initial_state(backend, &local_error)) {
-    if (g_error_matches(local_error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT)) {
-      g_warning("[bit_shelld] niri bootstrap incomplete at startup: %s",
-                local_error != NULL ? local_error->message : "unknown error");
-      if (error != NULL && local_error != NULL) {
-        g_propagate_error(error, g_steal_pointer(&local_error));
-      }
-    } else {
-      const char *message = local_error != NULL ? local_error->message : "niri bootstrap failed";
-      bs_niri_backend_close_event_connection(backend);
-      bs_state_store_set_shell_connection_state(backend->store, false, message);
-      g_warning("[bit_shelld] niri backend start degraded: %s", message);
-      bs_niri_backend_schedule_reconnect(backend);
-      if (error != NULL && local_error != NULL) {
-        g_propagate_error(error, g_steal_pointer(&local_error));
-      }
-      return true;
+    const char *message = local_error != NULL ? local_error->message : "niri bootstrap failed";
+    bs_niri_backend_close_event_connection(backend);
+    bs_state_store_begin_update(backend->store);
+    bs_state_store_set_shell_connection_state(backend->store, false, message);
+    bs_state_store_set_niri_readiness(backend->store, false, false, false, false);
+    bs_state_store_finish_update(backend->store);
+    g_warning("[bit_shelld] niri backend start degraded: %s", message);
+    bs_niri_backend_schedule_reconnect(backend);
+    if (error != NULL && local_error != NULL) {
+      g_propagate_error(error, g_steal_pointer(&local_error));
     }
+    return true;
   }
 
-  bs_state_store_set_shell_connection_state(backend->store, true, NULL);
   bs_niri_backend_begin_read(backend);
   g_message("[bit_shelld] niri event-stream connected");
   return true;

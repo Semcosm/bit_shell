@@ -7,6 +7,10 @@
 
 typedef struct {
   bool niri_connected;
+  bool outputs_ready;
+  bool workspaces_ready;
+  bool windows_ready;
+  bool bootstrap_used_fallback;
   char *degraded_reason;
   char *focused_output_name;
   char *focused_workspace_id;

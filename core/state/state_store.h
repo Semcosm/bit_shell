@@ -32,12 +32,19 @@ GPtrArray *bs_state_store_list_app_windows(BsStateStore *store, const char *app_
 
 void bs_state_store_begin_update(BsStateStore *store);
 void bs_state_store_finish_update(BsStateStore *store);
+void bs_state_store_begin_bootstrap(BsStateStore *store);
+void bs_state_store_finish_bootstrap(BsStateStore *store);
 
 void bs_state_store_mark_topic_changed(BsStateStore *store, BsTopic topic);
 
 void bs_state_store_set_shell_connection_state(BsStateStore *store,
                                                bool niri_connected,
                                                const char *degraded_reason);
+void bs_state_store_set_niri_readiness(BsStateStore *store,
+                                       bool outputs_ready,
+                                       bool workspaces_ready,
+                                       bool windows_ready,
+                                       bool bootstrap_used_fallback);
 void bs_state_store_replace_outputs(BsStateStore *store, GPtrArray *outputs);
 void bs_state_store_replace_workspaces(BsStateStore *store, GPtrArray *workspaces);
 void bs_state_store_replace_windows(BsStateStore *store, GPtrArray *windows);

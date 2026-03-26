@@ -7,6 +7,8 @@ struct _BsStateStore {
   BsSnapshot snapshot;
   BsTopicSet pending_topics;
   guint update_depth;
+  guint derived_freeze_depth;
+  bool derived_dirty;
   BsStateStoreObserver observer;
   gpointer observer_user_data;
   BsStateStoreDerivedUpdater derived_updater;
@@ -64,11 +66,21 @@ bs_shell_state_clear(BsShellState *shell_state) {
     return;
   }
 
+  shell_state->niri_connected = false;
+  shell_state->outputs_ready = false;
+  shell_state->workspaces_ready = false;
+  shell_state->windows_ready = false;
+  shell_state->bootstrap_used_fallback = false;
   g_free(shell_state->degraded_reason);
+  shell_state->degraded_reason = NULL;
   g_free(shell_state->focused_output_name);
+  shell_state->focused_output_name = NULL;
   g_free(shell_state->focused_workspace_id);
+  shell_state->focused_workspace_id = NULL;
   g_free(shell_state->focused_window_id);
+  shell_state->focused_window_id = NULL;
   g_free(shell_state->focused_window_title);
+  shell_state->focused_window_title = NULL;
 }
 
 void
@@ -399,6 +411,12 @@ static void
 bs_state_store_run_derived_updater(BsStateStore *store) {
   g_return_if_fail(store != NULL);
 
+  if (store->derived_freeze_depth > 0) {
+    store->derived_dirty = true;
+    return;
+  }
+
+  store->derived_dirty = false;
   if (store->derived_updater != NULL) {
     store->derived_updater(store, store->derived_updater_user_data);
   }
@@ -560,6 +578,23 @@ bs_state_store_finish_update(BsStateStore *store) {
 }
 
 void
+bs_state_store_begin_bootstrap(BsStateStore *store) {
+  g_return_if_fail(store != NULL);
+  store->derived_freeze_depth += 1;
+}
+
+void
+bs_state_store_finish_bootstrap(BsStateStore *store) {
+  g_return_if_fail(store != NULL);
+  g_return_if_fail(store->derived_freeze_depth > 0);
+
+  store->derived_freeze_depth -= 1;
+  if (store->derived_freeze_depth == 0 && store->derived_dirty) {
+    bs_state_store_run_derived_updater(store);
+  }
+}
+
+void
 bs_state_store_mark_topic_changed(BsStateStore *store, BsTopic topic) {
   g_return_if_fail(store != NULL);
   g_return_if_fail(topic >= 0 && topic < BS_TOPIC_COUNT);
@@ -588,6 +623,40 @@ bs_state_store_set_shell_connection_state(BsStateStore *store,
   if (g_strcmp0(shell->degraded_reason, degraded_reason) != 0) {
     g_free(shell->degraded_reason);
     shell->degraded_reason = g_strdup(degraded_reason);
+    changed = true;
+  }
+
+  if (changed) {
+    bs_state_store_mark_topic_changed(store, BS_TOPIC_SHELL);
+  }
+}
+
+void
+bs_state_store_set_niri_readiness(BsStateStore *store,
+                                  bool outputs_ready,
+                                  bool workspaces_ready,
+                                  bool windows_ready,
+                                  bool bootstrap_used_fallback) {
+  BsShellState *shell = NULL;
+  bool changed = false;
+
+  g_return_if_fail(store != NULL);
+
+  shell = &store->snapshot.shell;
+  if (shell->outputs_ready != outputs_ready) {
+    shell->outputs_ready = outputs_ready;
+    changed = true;
+  }
+  if (shell->workspaces_ready != workspaces_ready) {
+    shell->workspaces_ready = workspaces_ready;
+    changed = true;
+  }
+  if (shell->windows_ready != windows_ready) {
+    shell->windows_ready = windows_ready;
+    changed = true;
+  }
+  if (shell->bootstrap_used_fallback != bootstrap_used_fallback) {
+    shell->bootstrap_used_fallback = bootstrap_used_fallback;
     changed = true;
   }
 

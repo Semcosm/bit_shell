@@ -105,6 +105,10 @@ topic 与 `BsTopic` 一致：
   "state": {
     "shell": {
       "niri_connected": true,
+      "outputs_ready": true,
+      "workspaces_ready": true,
+      "windows_ready": true,
+      "bootstrap_used_fallback": false,
       "degraded_reason": null,
       "focused_output_name": "HDMI-A-1",
       "focused_workspace_id": "2",

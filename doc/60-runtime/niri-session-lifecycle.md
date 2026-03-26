@@ -4,6 +4,8 @@
 
 - niri session 就绪后启动 `bit-shelld`
 - `bit-shelld` 会尝试连接 niri；若失败进入 degraded 模式但进程继续运行
+- event-stream 连通后，`shell.niri_connected=true`；`outputs_ready/workspaces_ready/windows_ready` 分别表示首帧是否已齐
+- bootstrap 超时后只会对缺失 topic 做一次 fallback 请求；若 fallback 成功，连接保持可用
 - 前端服务在 shell 后启动并订阅状态
 
 ## 运行期

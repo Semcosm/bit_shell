@@ -264,6 +264,18 @@ bs_json_append_shell_payload(GString *json, const BsSnapshot *snapshot) {
   g_string_append_printf(json,
                          "\"niri_connected\":%s,",
                          snapshot->shell.niri_connected ? "true" : "false");
+  g_string_append_printf(json,
+                         "\"outputs_ready\":%s,",
+                         snapshot->shell.outputs_ready ? "true" : "false");
+  g_string_append_printf(json,
+                         "\"workspaces_ready\":%s,",
+                         snapshot->shell.workspaces_ready ? "true" : "false");
+  g_string_append_printf(json,
+                         "\"windows_ready\":%s,",
+                         snapshot->shell.windows_ready ? "true" : "false");
+  g_string_append_printf(json,
+                         "\"bootstrap_used_fallback\":%s,",
+                         snapshot->shell.bootstrap_used_fallback ? "true" : "false");
   g_string_append(json, "\"degraded_reason\":");
   bs_json_append_nullable_string(json, snapshot->shell.degraded_reason);
   g_string_append(json, ",\"focused_output_name\":");
