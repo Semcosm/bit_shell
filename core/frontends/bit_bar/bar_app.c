@@ -435,9 +435,9 @@ bs_bar_app_apply_metrics(BsBarApp *app, const BsBarMetrics *metrics) {
     gtk_widget_set_margin_end(app->left_box, metrics->section_gap);
   }
   if (app->center_box != NULL) {
-    gtk_box_set_spacing(GTK_BOX(app->center_box), metrics->section_gap);
-    gtk_widget_set_margin_start(app->center_box, metrics->section_gap);
-    gtk_widget_set_margin_end(app->center_box, metrics->section_gap);
+    gtk_box_set_spacing(GTK_BOX(app->center_box), 0);
+    gtk_widget_set_margin_start(app->center_box, 0);
+    gtk_widget_set_margin_end(app->center_box, 0);
   }
   if (app->right_box != NULL) {
     gtk_box_set_spacing(GTK_BOX(app->right_box), metrics->trailing_cluster_gap);
@@ -593,6 +593,7 @@ bs_bar_app_ensure_window(BsBarApp *app) {
   gtk_widget_set_hexpand(app->content_box, true);
   gtk_widget_set_halign(app->content_box, GTK_ALIGN_FILL);
   gtk_orientable_set_orientation(GTK_ORIENTABLE(app->content_box), GTK_ORIENTATION_HORIZONTAL);
+  gtk_center_box_set_shrink_center_last(GTK_CENTER_BOX(app->content_box), true);
 
   app->left_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   app->workspace_strip_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
