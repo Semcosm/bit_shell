@@ -18,6 +18,8 @@
 - 标题区可弹出窗口列表
 - 托盘 item 左键激活、右键菜单
 - tray 优先按图标渲染，文本只作回退；无 tray item 时右侧不显示错误文案
+- 时钟作为独立 trailing module 渲染，点击后显示本地轻量 popover；popover 内容完全前端本地生成，不依赖额外 IPC
+- 右侧 cluster 以稳定几何优先：clock 预留独立宽度，tray 与 clock 之间使用固定 gap，tray 数量变化不应拖动 clock
 - 右侧系统模块可插拔
 
 ## 非目标

@@ -9,6 +9,7 @@ BsClockWidget *bs_clock_widget_new(void);
 void bs_clock_widget_free(BsClockWidget *clock);
 
 GtkWidget *bs_clock_widget_root(BsClockWidget *clock);
+GtkWidget *bs_clock_widget_build_popover_content(BsClockWidget *clock);
 
 void bs_clock_widget_set_visible_enabled(BsClockWidget *clock, gboolean enabled);
 void bs_clock_widget_start(BsClockWidget *clock);
