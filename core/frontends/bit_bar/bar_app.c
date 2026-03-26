@@ -80,6 +80,7 @@ static GdkMonitor *bs_bar_app_lookup_monitor_by_name(const char *name);
 static void bs_bar_app_schedule_post_layout(BsBarApp *app);
 static gboolean bs_bar_app_post_layout_cb(gpointer user_data);
 static void bs_bar_app_validate_surface_width(BsBarApp *app);
+static gboolean bs_bar_app_monitor_matches_name(GdkMonitor *monitor, const char *name);
 static void bs_bar_app_log_widget_geometry(const char *label, GtkWidget *widget, GtkWidget *reference);
 static void bs_bar_app_apply_layout_from_vm(BsBarApp *app);
 static void bs_bar_app_render_left_from_vm(BsBarApp *app);
@@ -530,7 +531,6 @@ bs_bar_app_apply_bar_config(BsBarApp *app, const BsBarConfig *config) {
                                 layer_shell_supported ? 1 : bs_bar_app_fallback_window_width(),
                                 (int) app->config.height_px);
     if (layer_shell_supported) {
-      bs_bar_app_bind_target_monitor(app);
       gtk_layer_set_exclusive_zone(app->window, (int) app->config.height_px);
     }
     bs_bar_app_apply_metrics(app, &app->metrics);
@@ -678,20 +678,12 @@ bs_bar_app_lookup_monitor_by_name(const char *name) {
 
   for (guint i = 0; i < g_list_model_get_n_items(monitors); i++) {
     GdkMonitor *monitor = GDK_MONITOR(g_list_model_get_item(monitors, i));
-    const char *connector = NULL;
-    const char *description = NULL;
-    gboolean matched = FALSE;
 
     if (monitor == NULL) {
       continue;
     }
 
-    connector = gdk_monitor_get_connector(monitor);
-#if GTK_CHECK_VERSION(4, 10, 0)
-    description = gdk_monitor_get_description(monitor);
-#endif
-    matched = g_strcmp0(connector, name) == 0 || g_strcmp0(description, name) == 0;
-    if (matched) {
+    if (bs_bar_app_monitor_matches_name(monitor, name)) {
       return monitor;
     }
 
@@ -699,6 +691,21 @@ bs_bar_app_lookup_monitor_by_name(const char *name) {
   }
 
   return NULL;
+}
+
+static gboolean
+bs_bar_app_monitor_matches_name(GdkMonitor *monitor, const char *name) {
+  const char *connector = NULL;
+  const char *description = NULL;
+
+  g_return_val_if_fail(GDK_IS_MONITOR(monitor), FALSE);
+  g_return_val_if_fail(name != NULL, FALSE);
+
+  connector = gdk_monitor_get_connector(monitor);
+#if GTK_CHECK_VERSION(4, 10, 0)
+  description = gdk_monitor_get_description(monitor);
+#endif
+  return g_strcmp0(connector, name) == 0 || g_strcmp0(description, name) == 0;
 }
 
 static gboolean
@@ -803,12 +810,19 @@ bs_bar_app_post_layout_cb(gpointer user_data) {
 
 static void
 bs_bar_app_validate_surface_width(BsBarApp *app) {
-  g_autoptr(GdkMonitor) monitor = NULL;
-  GdkRectangle geometry = {0};
+  GdkMonitor *configured_monitor = NULL;
+  GdkMonitor *actual_monitor = NULL;
+  GtkNative *native = NULL;
+  GdkSurface *surface = NULL;
+  GdkRectangle actual_geometry = {0};
   int surface_width = 0;
   int root_width = 0;
   int content_width = 0;
   int delta = 0;
+  const char *focused_output_name = NULL;
+  const char *actual_connector = NULL;
+  const char *configured_connector = NULL;
+  gboolean layer_window = FALSE;
 
   g_return_if_fail(app != NULL);
 
@@ -816,35 +830,72 @@ bs_bar_app_validate_surface_width(BsBarApp *app) {
     return;
   }
 
-  monitor = bs_bar_app_select_target_monitor(app);
-  if (monitor == NULL) {
+  if (!gtk_layer_is_supported()) {
     return;
   }
 
-  gdk_monitor_get_geometry(monitor, &geometry);
-  if (geometry.width <= 0) {
+  layer_window = gtk_layer_is_layer_window(app->window);
+  if (!layer_window) {
+    g_warning("[bit_bar] layer-shell invariant failed: window is not a layer window");
+    return;
+  }
+  if (gtk_layer_get_zwlr_layer_surface_v1(app->window) == NULL) {
+    g_warning("[bit_bar] layer-shell invariant failed: missing zwlr layer surface");
     return;
   }
 
+  configured_monitor = gtk_layer_get_monitor(app->window);
+  native = gtk_widget_get_native(GTK_WIDGET(app->window));
+  if (native != NULL) {
+    surface = gtk_native_get_surface(native);
+  }
+  if (surface != NULL) {
+    actual_monitor = gdk_display_get_monitor_at_surface(gdk_surface_get_display(surface), surface);
+  }
+  if (configured_monitor == NULL || actual_monitor == NULL) {
+    g_warning("[bit_bar] layer-shell invariant failed: configured_monitor=%p actual_monitor=%p",
+              configured_monitor,
+              actual_monitor);
+    return;
+  }
+
+  gdk_monitor_get_geometry(actual_monitor, &actual_geometry);
   surface_width = gtk_widget_get_width(app->surface_box);
   root_width = gtk_widget_get_width(app->root_box);
   content_width = gtk_widget_get_width(app->content_box);
-  delta = ABS(surface_width - geometry.width);
+  delta = ABS(surface_width - actual_geometry.width);
+  focused_output_name = bs_bar_view_model_focused_output_name(app->view_model);
+  actual_connector = gdk_monitor_get_connector(actual_monitor);
+  configured_connector = gdk_monitor_get_connector(configured_monitor);
 
-  if (delta > 4) {
-    g_warning("[bit_bar] layer-surface width mismatch: expected=%d actual_surface=%d root=%d content=%d",
-              geometry.width,
-              surface_width,
-              root_width,
-              content_width);
+  if (configured_monitor != actual_monitor) {
+    g_warning("[bit_bar] layer-shell invariant failed: actual monitor=%s configured monitor=%s focused_output=%s",
+              actual_connector != NULL ? actual_connector : "<unknown>",
+              configured_connector != NULL ? configured_connector : "<unknown>",
+              focused_output_name != NULL ? focused_output_name : "<unknown>");
     return;
   }
 
-  g_message("[bit_bar] layer-surface width ok: expected=%d actual_surface=%d root=%d content=%d",
-            geometry.width,
+  if (delta > 4) {
+    g_warning("[bit_bar] layer-surface width mismatch: expected=%d actual_surface=%d root=%d content=%d actual_monitor=%s configured_monitor=%s focused_output=%s",
+              actual_geometry.width,
+              surface_width,
+              root_width,
+              content_width,
+              actual_connector != NULL ? actual_connector : "<unknown>",
+              configured_connector != NULL ? configured_connector : "<unknown>",
+              focused_output_name != NULL ? focused_output_name : "<unknown>");
+    return;
+  }
+
+  g_message("[bit_bar] layer-surface width ok: expected=%d actual_surface=%d root=%d content=%d actual_monitor=%s configured_monitor=%s focused_output=%s",
+            actual_geometry.width,
             surface_width,
             root_width,
-            content_width);
+            content_width,
+            actual_connector != NULL ? actual_connector : "<unknown>",
+            configured_connector != NULL ? configured_connector : "<unknown>",
+            focused_output_name != NULL ? focused_output_name : "<unknown>");
 }
 
 static void
@@ -1027,7 +1078,6 @@ bs_bar_app_apply_layout_from_vm(BsBarApp *app) {
   }
 
   bs_bar_app_apply_bar_config(app, config);
-  bs_bar_app_bind_target_monitor(app);
   if (app->left_box != NULL) {
     gtk_widget_set_visible(app->left_box, config->show_workspace_strip);
   }
