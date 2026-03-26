@@ -31,6 +31,12 @@ typedef enum {
 } BsBarVmWorkspaceStripState;
 
 typedef enum {
+  BS_BAR_WORKSPACE_PRESENTATION_FULL = 0,
+  BS_BAR_WORKSPACE_PRESENTATION_COMPACT,
+  BS_BAR_WORKSPACE_PRESENTATION_MINIMAL,
+} BsBarWorkspacePresentation;
+
+typedef enum {
   BS_BAR_VM_CENTER_CONNECTING = 0,
   BS_BAR_VM_CENTER_SYNCING_WINDOWS,
   BS_BAR_VM_CENTER_READY_NO_FOCUSED_WINDOW,
@@ -50,6 +56,10 @@ typedef struct {
   bool focused;
   bool empty;
   int local_index;
+  char *display_label;
+  char *tooltip_label;
+  BsBarWorkspacePresentation presentation;
+  guint sort_rank;
 } BsBarWorkspaceStripItem;
 
 typedef struct {

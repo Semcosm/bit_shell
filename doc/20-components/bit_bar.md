@@ -13,6 +13,7 @@
 ## v1 行为
 
 - 点击 workspace 标签切换工作区
+- 左侧工作区条在数量增多时自动进入 compact overflow policy，focused workspace 保持最高可识别性
 - 前端显式消费 `shell` readiness；连接中与首帧未齐阶段使用稳定占位，而不是把过渡态误显示为空状态
 - 标题区可弹出窗口列表
 - 托盘 item 左键激活、右键菜单

@@ -79,6 +79,7 @@ static void bs_bar_app_build_center_placeholder(BsBarApp *app,
                                                 const char *badge,
                                                 const char *text,
                                                 bool interactive);
+static GtkWidget *bs_bar_app_build_workspace_empty_placeholder(BsBarApp *app);
 static GtkWidget *bs_bar_app_build_workspace_button(BsBarApp *app,
                                                     const BsBarWorkspaceStripItem *item);
 static GtkWidget *bs_bar_app_build_window_candidate_row(BsBarApp *app,
@@ -304,6 +305,16 @@ bs_bar_app_build_center_placeholder(BsBarApp *app, const char *badge, const char
       gtk_popover_popdown(GTK_POPOVER(app->title_popover));
     }
   }
+}
+
+static GtkWidget *
+bs_bar_app_build_workspace_empty_placeholder(BsBarApp *app) {
+  g_return_val_if_fail(app != NULL, NULL);
+
+  return bs_bar_app_build_empty_capsule(app,
+                                        "workspace-placeholder",
+                                        MAX(app->metrics.workspace_min_height / 2, 10),
+                                        app->metrics.workspace_min_height);
 }
 
 static BsBarMetrics
@@ -585,10 +596,7 @@ bs_bar_app_render_left_from_vm(BsBarApp *app) {
     return;
   }
   if (state == BS_BAR_VM_WORKSPACE_STRIP_READY_EMPTY || items == NULL || items->len == 0) {
-    GtkWidget *placeholder = bs_bar_app_build_empty_capsule(app,
-                                                            "workspace-placeholder",
-                                                            app->metrics.workspace_min_height,
-                                                            app->metrics.workspace_min_height);
+    GtkWidget *placeholder = bs_bar_app_build_workspace_empty_placeholder(app);
 
     gtk_box_append(GTK_BOX(app->workspace_strip_box), placeholder);
     return;
@@ -687,21 +695,43 @@ bs_bar_app_render_right_from_vm(BsBarApp *app) {
 static GtkWidget *
 bs_bar_app_build_workspace_button(BsBarApp *app, const BsBarWorkspaceStripItem *item) {
   GtkWidget *button = NULL;
-  const char *label = NULL;
+  GtkWidget *content = NULL;
+  GtkWidget *label = NULL;
 
   g_return_val_if_fail(app != NULL, NULL);
   g_return_val_if_fail(item != NULL, NULL);
 
-  label = item->name != NULL && *item->name != '\0' ? item->name : item->id;
-  button = gtk_button_new_with_label(label != NULL ? label : "?");
+  button = gtk_button_new();
+  content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+  label = gtk_label_new(item->display_label != NULL ? item->display_label : "");
   gtk_widget_add_css_class(button, "bit-bar-workspace");
+  gtk_widget_add_css_class(content, "bit-bar-workspace-content");
+  gtk_widget_add_css_class(label, "bit-bar-workspace-label");
   if (item->focused) {
     gtk_widget_add_css_class(button, "is-focused");
   }
   if (item->empty) {
     gtk_widget_add_css_class(button, "is-empty");
   }
+  if (item->presentation == BS_BAR_WORKSPACE_PRESENTATION_FULL) {
+    gtk_widget_add_css_class(button, "is-full");
+  } else if (item->presentation == BS_BAR_WORKSPACE_PRESENTATION_COMPACT) {
+    gtk_widget_add_css_class(button, "is-compact");
+  } else {
+    gtk_widget_add_css_class(button, "is-minimal");
+  }
+  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+  gtk_label_set_single_line_mode(GTK_LABEL(label), true);
+  gtk_label_set_xalign(GTK_LABEL(label), 0.5f);
+  gtk_widget_set_halign(content, GTK_ALIGN_CENTER);
+  gtk_widget_set_valign(content, GTK_ALIGN_CENTER);
+  gtk_box_append(GTK_BOX(content), label);
+  gtk_button_set_child(GTK_BUTTON(button), content);
   gtk_widget_set_size_request(button, -1, app->metrics.workspace_min_height);
+  gtk_widget_set_tooltip_text(button,
+                              item->tooltip_label != NULL && *item->tooltip_label != '\0'
+                                ? item->tooltip_label
+                                : item->id);
   g_object_set_data_full(G_OBJECT(button), "bs-bar-workspace-id", g_strdup(item->id), g_free);
   g_signal_connect(button,
                    "clicked",

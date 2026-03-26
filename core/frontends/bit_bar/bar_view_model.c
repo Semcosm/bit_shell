@@ -104,6 +104,10 @@ static void bs_bar_view_model_parse_topic_versions(BsBarViewModel *vm,
 static void bs_bar_view_model_copy_topic_versions(guint64 *dst, const guint64 *src);
 static bool bs_bar_view_model_topic_versions_equal(const guint64 *lhs, const guint64 *rhs);
 static bool bs_bar_view_model_transport_live(BsBarViewModel *vm);
+static const char *bs_bar_vm_workspace_full_label(const BsBarVmWorkspace *workspace);
+static char *bs_bar_vm_workspace_compact_label(const BsBarVmWorkspace *workspace);
+static BsBarWorkspacePresentation bs_bar_vm_choose_workspace_presentation(guint workspace_count,
+                                                                          const BsBarVmWorkspace *workspace);
 static void bs_bar_view_model_rebuild_workspace_strip(BsBarViewModel *vm);
 static void bs_bar_view_model_rebuild_center_state(BsBarViewModel *vm);
 static void bs_bar_view_model_rebuild_tray_items(BsBarViewModel *vm);
@@ -200,6 +204,8 @@ bs_bar_workspace_strip_item_free(gpointer data) {
   g_free(item->id);
   g_free(item->name);
   g_free(item->output_name);
+  g_free(item->display_label);
+  g_free(item->tooltip_label);
   g_free(item);
 }
 
@@ -589,6 +595,64 @@ bs_bar_view_model_transport_live(BsBarViewModel *vm) {
   return vm->phase == BS_BAR_VM_PHASE_LIVE && vm->shell.niri_connected;
 }
 
+static const char *
+bs_bar_vm_workspace_full_label(const BsBarVmWorkspace *workspace) {
+  g_return_val_if_fail(workspace != NULL, NULL);
+
+  if (workspace->name != NULL && *workspace->name != '\0') {
+    return workspace->name;
+  }
+  return workspace->id;
+}
+
+static char *
+bs_bar_vm_workspace_compact_label(const BsBarVmWorkspace *workspace) {
+  g_return_val_if_fail(workspace != NULL, NULL);
+
+  if (workspace->local_index > 0) {
+    return g_strdup_printf("%d", workspace->local_index);
+  }
+  if (workspace->name != NULL && *workspace->name != '\0') {
+    gunichar first = g_utf8_get_char_validated(workspace->name, -1);
+
+    if (first != (gunichar) -1 && first != (gunichar) -2 && first != 0) {
+      char buffer[8] = {0};
+      gint len = g_unichar_to_utf8(g_unichar_toupper(first), buffer);
+
+      if (len > 0) {
+        return g_strdup(buffer);
+      }
+    }
+  }
+  if (workspace->id != NULL && *workspace->id != '\0') {
+    return g_strdup(workspace->id);
+  }
+  return g_strdup("?");
+}
+
+static BsBarWorkspacePresentation
+bs_bar_vm_choose_workspace_presentation(guint workspace_count, const BsBarVmWorkspace *workspace) {
+  g_return_val_if_fail(workspace != NULL, BS_BAR_WORKSPACE_PRESENTATION_FULL);
+
+  if (workspace_count <= 4) {
+    return BS_BAR_WORKSPACE_PRESENTATION_FULL;
+  }
+  if (workspace_count <= 7) {
+    if (workspace->focused) {
+      return BS_BAR_WORKSPACE_PRESENTATION_FULL;
+    }
+    return BS_BAR_WORKSPACE_PRESENTATION_COMPACT;
+  }
+
+  if (workspace->focused) {
+    return BS_BAR_WORKSPACE_PRESENTATION_FULL;
+  }
+  if (!workspace->empty) {
+    return BS_BAR_WORKSPACE_PRESENTATION_COMPACT;
+  }
+  return BS_BAR_WORKSPACE_PRESENTATION_MINIMAL;
+}
+
 static gint
 bs_bar_vm_compare_workspace_ptr(gconstpointer lhs, gconstpointer rhs) {
   const BsBarWorkspaceStripItem *a = *(BsBarWorkspaceStripItem * const *) lhs;
@@ -625,9 +689,11 @@ static void
 bs_bar_view_model_rebuild_workspace_strip(BsBarViewModel *vm) {
   GHashTableIter iter;
   gpointer value = NULL;
+  guint workspace_count = 0;
 
   g_return_if_fail(vm != NULL);
 
+  workspace_count = (guint) g_hash_table_size(vm->workspaces_by_id);
   g_ptr_array_set_size(vm->workspace_strip_items, 0);
   g_hash_table_iter_init(&iter, vm->workspaces_by_id);
   while (g_hash_table_iter_next(&iter, NULL, &value)) {
@@ -650,6 +716,16 @@ bs_bar_view_model_rebuild_workspace_strip(BsBarViewModel *vm) {
     item->focused = workspace->focused;
     item->empty = workspace->empty;
     item->local_index = workspace->local_index;
+    item->tooltip_label = g_strdup(bs_bar_vm_workspace_full_label(workspace));
+    item->presentation = bs_bar_vm_choose_workspace_presentation(workspace_count, workspace);
+    item->sort_rank = workspace->focused ? 0U : (workspace->empty ? 2U : 1U);
+    if (item->presentation == BS_BAR_WORKSPACE_PRESENTATION_FULL) {
+      item->display_label = g_strdup(item->tooltip_label);
+    } else if (item->presentation == BS_BAR_WORKSPACE_PRESENTATION_COMPACT) {
+      item->display_label = bs_bar_vm_workspace_compact_label(workspace);
+    } else {
+      item->display_label = g_strdup("");
+    }
     g_ptr_array_add(vm->workspace_strip_items, item);
   }
 
