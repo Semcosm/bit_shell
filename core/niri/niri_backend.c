@@ -5,6 +5,7 @@
 #include <json-glib/json-glib.h>
 
 #define BS_NIRI_RECONNECT_DELAY_MS 2000U
+#define BS_NIRI_BOOTSTRAP_TIMEOUT_US (1500 * G_TIME_SPAN_MILLISECOND)
 
 static void
 bs_niri_backend_free_output_ptr(gpointer data) {
@@ -49,12 +50,22 @@ struct _BsNiriBackend {
   guint reconnect_source_id;
 };
 
+typedef struct {
+  bool saw_initial_workspaces;
+  bool saw_initial_windows;
+} BsNiriBootstrapState;
+
 static const char *bs_niri_backend_resolve_socket_path(BsNiriBackend *backend);
 static void bs_niri_backend_close_event_connection(BsNiriBackend *backend);
 static void bs_niri_backend_cancel_reconnect(BsNiriBackend *backend);
 static void bs_niri_backend_schedule_reconnect(BsNiriBackend *backend);
 static gboolean bs_niri_backend_reconnect_cb(gpointer user_data);
-static bool bs_niri_backend_connect_stream(BsNiriBackend *backend, GError **error);
+static bool bs_niri_backend_connect_event_stream(BsNiriBackend *backend, GError **error);
+static bool bs_niri_backend_prime_initial_state(BsNiriBackend *backend, GError **error);
+static bool bs_niri_backend_read_initial_event_line(BsNiriBackend *backend,
+                                                    BsNiriBootstrapState *state,
+                                                    gint64 timeout_us,
+                                                    GError **error);
 static bool bs_niri_backend_refresh_outputs(BsNiriBackend *backend, GError **error);
 static GSocketConnection *bs_niri_backend_open_connection(BsNiriBackend *backend, GError **error);
 static bool bs_niri_backend_write_request(GOutputStream *output, const char *request, GError **error);
@@ -88,7 +99,10 @@ static void bs_niri_backend_begin_read(BsNiriBackend *backend);
 static void bs_niri_backend_on_read_line(GObject *source_object,
                                          GAsyncResult *result,
                                          gpointer user_data);
-static bool bs_niri_backend_apply_event(BsNiriBackend *backend, const char *line, GError **error);
+static bool bs_niri_backend_apply_event(BsNiriBackend *backend,
+                                        const char *line,
+                                        BsNiriBootstrapState *bootstrap_state,
+                                        GError **error);
 
 static const char *
 bs_niri_backend_resolve_socket_path(BsNiriBackend *backend) {
@@ -185,15 +199,36 @@ bs_niri_backend_reconnect_cb(gpointer user_data) {
     return G_SOURCE_REMOVE;
   }
 
-  if (!bs_niri_backend_connect_stream(backend, &error)) {
+  if (!bs_niri_backend_connect_event_stream(backend, &error)) {
     g_warning("[bit_shelld] niri reconnect failed: %s",
               error != NULL ? error->message : "unknown error");
     bs_state_store_set_shell_connection_state(backend->store,
                                               false,
                                               error != NULL ? error->message : "niri reconnect failed");
     bs_niri_backend_schedule_reconnect(backend);
+    return G_SOURCE_REMOVE;
   }
 
+  if (!bs_niri_backend_prime_initial_state(backend, &error)) {
+    if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT)) {
+      g_warning("[bit_shelld] niri bootstrap incomplete after reconnect: %s",
+                error != NULL ? error->message : "unknown error");
+      g_clear_error(&error);
+    } else {
+      g_warning("[bit_shelld] niri reconnect bootstrap failed: %s",
+                error != NULL ? error->message : "unknown error");
+      bs_niri_backend_close_event_connection(backend);
+      bs_state_store_set_shell_connection_state(backend->store,
+                                                false,
+                                                error != NULL ? error->message : "niri reconnect bootstrap failed");
+      bs_niri_backend_schedule_reconnect(backend);
+      return G_SOURCE_REMOVE;
+    }
+  }
+
+  bs_state_store_set_shell_connection_state(backend->store, true, NULL);
+  bs_niri_backend_begin_read(backend);
+  g_message("[bit_shelld] niri event-stream connected");
   return G_SOURCE_REMOVE;
 }
 
@@ -686,7 +721,7 @@ bs_niri_backend_refresh_outputs(BsNiriBackend *backend, GError **error) {
 }
 
 static bool
-bs_niri_backend_connect_stream(BsNiriBackend *backend, GError **error) {
+bs_niri_backend_connect_event_stream(BsNiriBackend *backend, GError **error) {
   g_autofree char *ack_line = NULL;
 
   g_return_val_if_fail(backend != NULL, false);
@@ -727,10 +762,96 @@ bs_niri_backend_connect_stream(BsNiriBackend *backend, GError **error) {
 
   backend->event_input = g_data_input_stream_new(g_io_stream_get_input_stream(G_IO_STREAM(backend->event_connection)));
   g_data_input_stream_set_newline_type(backend->event_input, G_DATA_STREAM_NEWLINE_TYPE_LF);
+  return true;
+}
 
-  bs_state_store_set_shell_connection_state(backend->store, true, NULL);
-  bs_niri_backend_begin_read(backend);
-  g_message("[bit_shelld] niri event-stream connected");
+static bool
+bs_niri_backend_prime_initial_state(BsNiriBackend *backend, GError **error) {
+  BsNiriBootstrapState state = {0};
+  gint64 deadline_us = 0;
+
+  g_return_val_if_fail(backend != NULL, false);
+  g_return_val_if_fail(backend->event_connection != NULL, false);
+  g_return_val_if_fail(backend->event_input != NULL, false);
+
+  deadline_us = g_get_monotonic_time() + BS_NIRI_BOOTSTRAP_TIMEOUT_US;
+  while (!state.saw_initial_workspaces || !state.saw_initial_windows) {
+    g_autoptr(GError) local_error = NULL;
+    gint64 remaining_us = deadline_us - g_get_monotonic_time();
+
+    if (remaining_us <= 0) {
+      break;
+    }
+
+    if (!bs_niri_backend_read_initial_event_line(backend, &state, remaining_us, &local_error)) {
+      if (g_error_matches(local_error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT)) {
+        break;
+      }
+
+      g_propagate_error(error, g_steal_pointer(&local_error));
+      return false;
+    }
+  }
+
+  if (!state.saw_initial_workspaces || !state.saw_initial_windows) {
+    g_set_error(error,
+                G_IO_ERROR,
+                G_IO_ERROR_TIMED_OUT,
+                "niri bootstrap timed out waiting for initial %s%s%s",
+                !state.saw_initial_workspaces ? "WorkspacesChanged" : "",
+                (!state.saw_initial_workspaces && !state.saw_initial_windows) ? " and " : "",
+                !state.saw_initial_windows ? "WindowsChanged" : "");
+    return false;
+  }
+
+  return true;
+}
+
+static bool
+bs_niri_backend_read_initial_event_line(BsNiriBackend *backend,
+                                        BsNiriBootstrapState *state,
+                                        gint64 timeout_us,
+                                        GError **error) {
+  g_autofree char *line = NULL;
+  g_autoptr(GError) local_error = NULL;
+  GSocket *socket = NULL;
+
+  g_return_val_if_fail(backend != NULL, false);
+  g_return_val_if_fail(state != NULL, false);
+  g_return_val_if_fail(backend->event_connection != NULL, false);
+  g_return_val_if_fail(backend->event_input != NULL, false);
+
+  socket = g_socket_connection_get_socket(backend->event_connection);
+  if (socket == NULL) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "niri event-stream missing socket");
+    return false;
+  }
+
+  if (!g_socket_condition_timed_wait(socket,
+                                     G_IO_IN | G_IO_HUP | G_IO_ERR,
+                                     timeout_us,
+                                     NULL,
+                                     error)) {
+    return false;
+  }
+
+  line = g_data_input_stream_read_line(backend->event_input, NULL, NULL, error);
+  if (line == NULL) {
+    if (error != NULL && *error == NULL) {
+      g_set_error(error,
+                  G_IO_ERROR,
+                  G_IO_ERROR_CONNECTION_CLOSED,
+                  "niri event-stream closed during bootstrap");
+    }
+    return false;
+  }
+
+  if (!bs_niri_backend_apply_event(backend, line, state, &local_error)) {
+    g_warning("[bit_shelld] ignored niri bootstrap event: %s (%s)",
+              line,
+              local_error != NULL ? local_error->message : "parse failure");
+  }
+
   return true;
 }
 
@@ -775,7 +896,7 @@ bs_niri_backend_on_read_line(GObject *source_object,
     return;
   }
 
-  if (!bs_niri_backend_apply_event(backend, line, &error)) {
+  if (!bs_niri_backend_apply_event(backend, line, NULL, &error)) {
     g_warning("[bit_shelld] ignored niri event: %s (%s)",
               line,
               error != NULL ? error->message : "parse failure");
@@ -787,7 +908,10 @@ bs_niri_backend_on_read_line(GObject *source_object,
 }
 
 static bool
-bs_niri_backend_apply_event(BsNiriBackend *backend, const char *line, GError **error) {
+bs_niri_backend_apply_event(BsNiriBackend *backend,
+                            const char *line,
+                            BsNiriBootstrapState *bootstrap_state,
+                            GError **error) {
   JsonNode *root = NULL;
   JsonObject *root_object = NULL;
 
@@ -810,6 +934,10 @@ bs_niri_backend_apply_event(BsNiriBackend *backend, const char *line, GError **e
     JsonObject *event = json_object_get_object_member(root_object, "WorkspacesChanged");
     JsonArray *array = json_object_get_array_member(event, "workspaces");
     g_autoptr(GPtrArray) workspaces = g_ptr_array_new_with_free_func(bs_niri_backend_free_workspace_ptr);
+
+    if (bootstrap_state != NULL) {
+      bootstrap_state->saw_initial_workspaces = true;
+    }
 
     for (guint i = 0; i < json_array_get_length(array); i++) {
       BsWorkspace *workspace = g_new0(BsWorkspace, 1);
@@ -861,6 +989,10 @@ bs_niri_backend_apply_event(BsNiriBackend *backend, const char *line, GError **e
     JsonObject *event = json_object_get_object_member(root_object, "WindowsChanged");
     JsonArray *array = json_object_get_array_member(event, "windows");
     g_autoptr(GPtrArray) windows = g_ptr_array_new_with_free_func(bs_niri_backend_free_window_ptr);
+
+    if (bootstrap_state != NULL) {
+      bootstrap_state->saw_initial_windows = true;
+    }
 
     for (guint i = 0; i < json_array_get_length(array); i++) {
       BsWindow *window = g_new0(BsWindow, 1);
@@ -961,7 +1093,7 @@ bs_niri_backend_start(BsNiriBackend *backend, GError **error) {
   }
 
   backend->running = true;
-  if (!bs_niri_backend_connect_stream(backend, &local_error)) {
+  if (!bs_niri_backend_connect_event_stream(backend, &local_error)) {
     const char *message = local_error != NULL ? local_error->message : "niri connect failed";
     bs_state_store_set_shell_connection_state(backend->store, false, message);
     g_warning("[bit_shelld] niri backend start degraded: %s", message);
@@ -969,8 +1101,32 @@ bs_niri_backend_start(BsNiriBackend *backend, GError **error) {
     if (error != NULL && local_error != NULL) {
       g_propagate_error(error, g_steal_pointer(&local_error));
     }
+    return true;
   }
 
+  if (!bs_niri_backend_prime_initial_state(backend, &local_error)) {
+    if (g_error_matches(local_error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT)) {
+      g_warning("[bit_shelld] niri bootstrap incomplete at startup: %s",
+                local_error != NULL ? local_error->message : "unknown error");
+      if (error != NULL && local_error != NULL) {
+        g_propagate_error(error, g_steal_pointer(&local_error));
+      }
+    } else {
+      const char *message = local_error != NULL ? local_error->message : "niri bootstrap failed";
+      bs_niri_backend_close_event_connection(backend);
+      bs_state_store_set_shell_connection_state(backend->store, false, message);
+      g_warning("[bit_shelld] niri backend start degraded: %s", message);
+      bs_niri_backend_schedule_reconnect(backend);
+      if (error != NULL && local_error != NULL) {
+        g_propagate_error(error, g_steal_pointer(&local_error));
+      }
+      return true;
+    }
+  }
+
+  bs_state_store_set_shell_connection_state(backend->store, true, NULL);
+  bs_niri_backend_begin_read(backend);
+  g_message("[bit_shelld] niri event-stream connected");
   return true;
 }
 
@@ -1016,20 +1172,6 @@ bool
 bs_niri_backend_auto_reconnect(const BsNiriBackend *backend) {
   g_return_val_if_fail(backend != NULL, false);
   return backend->auto_reconnect;
-}
-
-bool
-bs_niri_backend_request_initial_snapshot(BsNiriBackend *backend, GError **error) {
-  g_return_val_if_fail(backend != NULL, false);
-  (void) error;
-  return true;
-}
-
-bool
-bs_niri_backend_subscribe_event_stream(BsNiriBackend *backend, GError **error) {
-  g_return_val_if_fail(backend != NULL, false);
-  (void) error;
-  return true;
 }
 
 bool

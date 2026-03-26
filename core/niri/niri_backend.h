@@ -22,9 +22,6 @@ bool bs_niri_backend_set_auto_reconnect(BsNiriBackend *backend,
                                         bool enabled,
                                         GError **error);
 bool bs_niri_backend_auto_reconnect(const BsNiriBackend *backend);
-
-bool bs_niri_backend_request_initial_snapshot(BsNiriBackend *backend, GError **error);
-bool bs_niri_backend_subscribe_event_stream(BsNiriBackend *backend, GError **error);
 bool bs_niri_backend_focus_window(BsNiriBackend *backend,
                                   const char *window_id,
                                   GError **error);

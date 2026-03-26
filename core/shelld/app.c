@@ -166,15 +166,7 @@ bs_shelld_app_start(BsShelldApp *app, GError **error) {
     return false;
   }
 
-  if (!bs_dock_service_rebuild(app->dock_service, error)) {
-    return false;
-  }
-
   if (!bs_tray_service_start(app->tray_service, error)) {
-    return false;
-  }
-
-  if (!bs_ipc_server_start(app->ipc_server, error)) {
     return false;
   }
 
@@ -183,6 +175,10 @@ bs_shelld_app_start(BsShelldApp *app, GError **error) {
   }
   if (niri_error != NULL) {
     g_warning("[bit_shelld] started with degraded niri backend: %s", niri_error->message);
+  }
+
+  if (!bs_ipc_server_start(app->ipc_server, error)) {
+    return false;
   }
   if (app->config_watcher != NULL && !bs_config_watcher_start(app->config_watcher, &watcher_error)) {
     g_warning("[bit_shelld] config watcher disabled: %s",
