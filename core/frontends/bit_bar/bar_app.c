@@ -61,6 +61,7 @@ struct _BsBarApp {
 };
 
 static BsBarMetrics bs_bar_metrics_from_height(guint32 height_px);
+static int bs_bar_app_fallback_window_width(void);
 static void bs_bar_app_apply_bar_config(BsBarApp *app, const BsBarConfig *config);
 static void bs_bar_app_apply_metrics(BsBarApp *app, const BsBarMetrics *metrics);
 static void bs_bar_app_configure_window(BsBarApp *app);
@@ -491,6 +492,8 @@ bs_bar_app_apply_metrics(BsBarApp *app, const BsBarMetrics *metrics) {
 
 static void
 bs_bar_app_apply_bar_config(BsBarApp *app, const BsBarConfig *config) {
+  const gboolean layer_shell_supported = gtk_layer_is_supported();
+
   g_return_if_fail(app != NULL);
   g_return_if_fail(config != NULL);
 
@@ -498,8 +501,10 @@ bs_bar_app_apply_bar_config(BsBarApp *app, const BsBarConfig *config) {
   app->metrics = bs_bar_metrics_from_height(app->config.height_px);
 
   if (app->window != NULL) {
-    gtk_window_set_default_size(app->window, 1, (int) app->config.height_px);
-    if (gtk_layer_is_supported()) {
+    gtk_window_set_default_size(app->window,
+                                layer_shell_supported ? 1 : bs_bar_app_fallback_window_width(),
+                                (int) app->config.height_px);
+    if (layer_shell_supported) {
       gtk_layer_set_exclusive_zone(app->window, (int) app->config.height_px);
     }
     bs_bar_app_apply_metrics(app, &app->metrics);
@@ -508,15 +513,20 @@ bs_bar_app_apply_bar_config(BsBarApp *app, const BsBarConfig *config) {
 
 static void
 bs_bar_app_configure_window(BsBarApp *app) {
+  const gboolean layer_shell_supported = gtk_layer_is_supported();
+
   g_return_if_fail(app != NULL);
   g_return_if_fail(app->window != NULL);
 
   gtk_window_set_title(app->window, "bit_bar");
   gtk_window_set_decorated(app->window, false);
   gtk_window_set_resizable(app->window, false);
-  gtk_window_set_default_size(app->window, 1, (int) app->config.height_px);
+  gtk_window_set_default_size(app->window,
+                              layer_shell_supported ? 1 : bs_bar_app_fallback_window_width(),
+                              (int) app->config.height_px);
+  g_message("[bit_bar] gtk_layer_is_supported=%d", layer_shell_supported ? 1 : 0);
 
-  if (gtk_layer_is_supported()) {
+  if (layer_shell_supported) {
     gtk_layer_init_for_window(app->window);
     gtk_layer_set_namespace(app->window, BS_BAR_NAMESPACE);
     gtk_layer_set_layer(app->window, GTK_LAYER_SHELL_LAYER_TOP);
@@ -525,7 +535,36 @@ bs_bar_app_configure_window(BsBarApp *app) {
     gtk_layer_set_anchor(app->window, GTK_LAYER_SHELL_EDGE_RIGHT, true);
     gtk_layer_set_keyboard_mode(app->window, GTK_LAYER_SHELL_KEYBOARD_MODE_NONE);
     gtk_layer_set_exclusive_zone(app->window, (int) app->config.height_px);
+  } else {
+    g_warning("[bit_bar] gtk-layer-shell unavailable; falling back to monitor-sized GTK window");
   }
+}
+
+static int
+bs_bar_app_fallback_window_width(void) {
+  GdkDisplay *display = NULL;
+  GListModel *monitors = NULL;
+  gpointer item = NULL;
+  GdkRectangle geometry = {0};
+
+  display = gdk_display_get_default();
+  if (display == NULL) {
+    return 1280;
+  }
+
+  monitors = gdk_display_get_monitors(display);
+  if (monitors == NULL || g_list_model_get_n_items(monitors) == 0) {
+    return 1280;
+  }
+
+  item = g_list_model_get_item(monitors, 0);
+  if (item == NULL) {
+    return 1280;
+  }
+
+  gdk_monitor_get_geometry(GDK_MONITOR(item), &geometry);
+  g_object_unref(item);
+  return geometry.width > 0 ? geometry.width : 1280;
 }
 
 static void
