@@ -19,6 +19,7 @@ typedef struct {
   GHashTable *dock_items;
   GHashTable *tray_items;
   GPtrArray *pinned_app_ids;
+  BsBarConfig bar_config;
   BsDockConfig dock_config;
 } BsSnapshot;
 

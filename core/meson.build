@@ -45,6 +45,7 @@ executable(
 
 bit_dock_sources = files(
   'model/config.c',
+  'frontends/common/ipc_client.c',
   'frontends/bit_dock/main.c',
   'frontends/bit_dock/dock_layout.c',
   'frontends/bit_dock/dock_app.c',
@@ -55,5 +56,23 @@ executable(
   bit_dock_sources,
   include_directories: core_includes,
   dependencies: [glib_dep, gio_dep, gio_unix_dep, json_glib_dep, gtk4_dep, gtk4_layer_shell_dep, math_dep],
+  install: false,
+)
+
+bit_bar_sources = files(
+  'model/config.c',
+  'model/ipc.c',
+  'frontends/common/ipc_client.c',
+  'frontends/bit_bar/main.c',
+  'frontends/bit_bar/bar_app.c',
+  'frontends/bit_bar/bar_view_model.c',
+  'frontends/bit_bar/clock_widget.c',
+)
+
+executable(
+  'bit_bar',
+  bit_bar_sources,
+  include_directories: core_includes,
+  dependencies: [glib_dep, gio_dep, gio_unix_dep, json_glib_dep, gtk4_dep, gtk4_layer_shell_dep],
   install: false,
 )

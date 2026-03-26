@@ -446,6 +446,7 @@ bs_settings_service_append_string_array_json(GString *content, GPtrArray *values
 
 static bool
 bs_settings_service_parse_state(BsSettingsService *service,
+                                const BsBarConfig *bar_config,
                                 const BsDockConfig *dock_config,
                                 const char *contents,
                                 GError **error) {
@@ -457,11 +458,13 @@ bs_settings_service_parse_state(BsSettingsService *service,
   JsonArray *pinned_apps = NULL;
 
   g_return_val_if_fail(service != NULL, false);
+  g_return_val_if_fail(bar_config != NULL, false);
   g_return_val_if_fail(dock_config != NULL, false);
 
   if (contents == NULL || *contents == '\0') {
     bs_state_store_begin_update(service->store);
     bs_state_store_replace_pinned_app_ids(service->store, NULL);
+    bs_state_store_replace_bar_config(service->store, bar_config);
     bs_state_store_replace_dock_config(service->store, dock_config);
     bs_state_store_finish_update(service->store);
     return true;
@@ -508,6 +511,7 @@ bs_settings_service_parse_state(BsSettingsService *service,
 
   bs_state_store_begin_update(service->store);
   bs_state_store_replace_pinned_app_ids(service->store, pinned_app_ids);
+  bs_state_store_replace_bar_config(service->store, bar_config);
   bs_state_store_replace_dock_config(service->store, dock_config);
   bs_state_store_finish_update(service->store);
   return true;
@@ -635,6 +639,17 @@ bs_settings_service_read_state_text(BsSettingsService *service,
   }
 
   return g_file_get_contents(service->state_path, state_contents_out, NULL, error);
+}
+
+bool
+bs_settings_service_apply_bar_config(BsSettingsService *service, const BsBarConfig *bar_config) {
+  g_return_val_if_fail(service != NULL, false);
+  g_return_val_if_fail(bar_config != NULL, false);
+
+  bs_state_store_begin_update(service->store);
+  bs_state_store_replace_bar_config(service->store, bar_config);
+  bs_state_store_finish_update(service->store);
+  return true;
 }
 
 bool
@@ -828,7 +843,11 @@ bs_settings_service_import_state(BsSettingsService *service, GError **error) {
     return false;
   }
 
-  return bs_settings_service_parse_state(service, &service->shell_config.dock, state_contents, error);
+  return bs_settings_service_parse_state(service,
+                                         &service->shell_config.bar,
+                                         &service->shell_config.dock,
+                                         state_contents,
+                                         error);
 }
 
 bool

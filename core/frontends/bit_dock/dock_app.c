@@ -1,4 +1,5 @@
 #include "frontends/bit_dock/dock_app.h"
+#include "frontends/common/ipc_client.h"
 #include "frontends/bit_dock/dock_layout.h"
 
 #include <gio/gio.h>
@@ -82,20 +83,14 @@ struct _BsDockApp {
   GtkEventController *items_motion;
   GtkCssProvider *base_css_provider;
   GtkCssProvider *dynamic_css_provider;
-  GSocketClient *socket_client;
-  GSocketConnection *connection;
-  GDataInputStream *input;
-  GOutputStream *output;
-  GCancellable *read_cancellable;
+  BsFrontendIpcClient *ipc_client;
   GPtrArray *items;
   GPtrArray *ordered_item_widgets;
   GHashTable *item_widgets_by_app_key;
-  char *socket_path;
   double pointer_x;
   double pointer_y;
   gint64 last_frame_time_us;
   guint tick_callback_id;
-  guint reconnect_source_id;
   guint next_slot_css_id;
   int root_box_margin_top_px;
   int items_box_margin_start_px;
@@ -111,7 +106,6 @@ struct _BsDockApp {
 static void bs_dock_item_view_free(gpointer data);
 static void bs_dock_item_action_data_free(gpointer data);
 static void bs_dock_item_widgets_free(gpointer data);
-static void bs_dock_app_close_connection(BsDockApp *app);
 static void bs_dock_app_set_status(BsDockApp *app, const char *message);
 static void bs_dock_app_update_action_data(BsDockItemActionData *action, const BsDockItemView *item);
 static BsDockItemWidgets *bs_dock_app_create_item_widgets(BsDockApp *app, const BsDockItemView *item);
@@ -149,8 +143,6 @@ static void bs_dock_app_apply_dock_payload(BsDockApp *app, JsonObject *payload);
 static void bs_dock_app_apply_settings_payload(BsDockApp *app, JsonObject *payload);
 static GPtrArray *bs_dock_app_parse_dock_items(JsonObject *payload);
 static void bs_dock_app_log_dock_items(BsDockApp *app, const char *source);
-static gboolean bs_dock_app_reconnect_cb(gpointer user_data);
-static void bs_dock_app_schedule_reconnect(BsDockApp *app);
 static bool bs_dock_app_send_json(BsDockApp *app, const char *json, GError **error);
 static bool bs_dock_app_send_app_window_focus_request(BsDockApp *app,
                                                       const BsDockItemActionData *action,
@@ -164,11 +156,11 @@ static void bs_dock_app_compose_effective_visuals(BsDockItemWidgets *widgets,
                                                   double *out_translate_y,
                                                   double *out_scale);
 static void bs_dock_app_apply_dock_config(BsDockApp *app, const BsDockConfig *config);
-static void bs_dock_app_begin_read(BsDockApp *app);
-static void bs_dock_app_on_read_line(GObject *source_object,
-                                     GAsyncResult *result,
-                                     gpointer user_data);
-static bool bs_dock_app_connect_ipc(BsDockApp *app, GError **error);
+static void bs_dock_app_on_ipc_connected(BsFrontendIpcClient *client, gpointer user_data);
+static void bs_dock_app_on_ipc_disconnected(BsFrontendIpcClient *client, gpointer user_data);
+static void bs_dock_app_on_ipc_line(BsFrontendIpcClient *client,
+                                    const char *line,
+                                    gpointer user_data);
 static void bs_dock_app_ensure_window(BsDockApp *app);
 static void bs_dock_app_apply_css(BsDockApp *app);
 static void bs_dock_app_on_activate(GtkApplication *gtk_app, gpointer user_data);
@@ -198,17 +190,6 @@ static gboolean bs_dock_app_on_item_scrolled(GtkEventControllerScroll *controlle
                                              gpointer user_data);
 static GPtrArray *bs_string_ptr_array_dup(GPtrArray *values);
 static GPtrArray *bs_json_string_array_member(JsonObject *object, const char *member_name);
-
-static char *
-bs_dock_app_default_socket_path(void) {
-  const char *runtime_dir = g_get_user_runtime_dir();
-
-  if (runtime_dir == NULL || *runtime_dir == '\0') {
-    runtime_dir = g_get_tmp_dir();
-  }
-
-  return g_build_filename(runtime_dir, "bit_shell", "bit_shelld.sock", NULL);
-}
 
 static void
 bs_dock_item_view_free(gpointer data) {
@@ -244,10 +225,9 @@ BsDockApp *
 bs_dock_app_new(void) {
   BsDockApp *app = g_new0(BsDockApp, 1);
   const char *socket_override = g_getenv("BIT_SHELL_SOCKET");
+  BsFrontendIpcClientConfig ipc_config = {0};
 
   app->gtk_app = gtk_application_new(BS_DOCK_APP_ID, G_APPLICATION_DEFAULT_FLAGS);
-  app->socket_client = g_socket_client_new();
-  app->read_cancellable = g_cancellable_new();
   app->items = g_ptr_array_new_with_free_func(bs_dock_item_view_free);
   app->ordered_item_widgets = g_ptr_array_new();
   app->item_widgets_by_app_key = g_hash_table_new_full(g_str_hash,
@@ -259,11 +239,16 @@ bs_dock_app_new(void) {
   app->root_box_margin_top_px = -1;
   app->items_box_margin_start_px = -1;
   app->items_box_margin_end_px = -1;
-  app->socket_path = (socket_override != NULL && *socket_override != '\0')
-                       ? g_strdup(socket_override)
-                       : bs_dock_app_default_socket_path();
+  ipc_config.socket_path = (socket_override != NULL && *socket_override != '\0') ? socket_override : NULL;
+  ipc_config.reconnect_delay_ms = BS_DOCK_RECONNECT_DELAY_MS;
+  ipc_config.on_connected = bs_dock_app_on_ipc_connected;
+  ipc_config.on_disconnected = bs_dock_app_on_ipc_disconnected;
+  ipc_config.on_line = bs_dock_app_on_ipc_line;
+  ipc_config.user_data = app;
+  app->ipc_client = bs_frontend_ipc_client_new(&ipc_config);
 
-  g_message("[bit_dock] initialized with IPC socket %s", app->socket_path);
+  g_message("[bit_dock] initialized with IPC socket %s",
+            bs_frontend_ipc_client_socket_path(app->ipc_client));
   g_signal_connect(app->gtk_app, "activate", G_CALLBACK(bs_dock_app_on_activate), app);
   return app;
 }
@@ -275,19 +260,13 @@ bs_dock_app_free(BsDockApp *app) {
   }
 
   bs_dock_app_stop_tick(app);
-  if (app->reconnect_source_id != 0) {
-    g_source_remove(app->reconnect_source_id);
-  }
-  bs_dock_app_close_connection(app);
   g_clear_pointer(&app->items, g_ptr_array_unref);
   g_clear_pointer(&app->ordered_item_widgets, g_ptr_array_unref);
   g_clear_pointer(&app->item_widgets_by_app_key, g_hash_table_unref);
-  g_clear_object(&app->read_cancellable);
-  g_clear_object(&app->socket_client);
+  bs_frontend_ipc_client_free(app->ipc_client);
   g_clear_object(&app->base_css_provider);
   g_clear_object(&app->dynamic_css_provider);
   g_clear_object(&app->gtk_app);
-  g_free(app->socket_path);
   g_free(app);
 }
 
@@ -311,24 +290,6 @@ int
 bs_dock_app_run(BsDockApp *app, int argc, char **argv) {
   g_return_val_if_fail(app != NULL, 1);
   return g_application_run(G_APPLICATION(app->gtk_app), argc, argv);
-}
-
-static void
-bs_dock_app_close_connection(BsDockApp *app) {
-  g_return_if_fail(app != NULL);
-
-  app->ipc_ready = false;
-  if (app->read_cancellable != NULL) {
-    g_cancellable_cancel(app->read_cancellable);
-    g_cancellable_reset(app->read_cancellable);
-  }
-  g_clear_object(&app->input);
-  app->output = NULL;
-  if (app->connection != NULL) {
-    g_message("[bit_dock] closing IPC connection");
-    (void) g_io_stream_close(G_IO_STREAM(app->connection), NULL, NULL);
-    g_clear_object(&app->connection);
-  }
 }
 
 static void
@@ -1832,70 +1793,12 @@ bs_dock_app_apply_settings_payload(BsDockApp *app, JsonObject *payload) {
   bs_dock_app_apply_dock_config(app, &config);
 }
 
-static gboolean
-bs_dock_app_reconnect_cb(gpointer user_data) {
-  BsDockApp *app = user_data;
-  g_autoptr(GError) error = NULL;
-
-  g_return_val_if_fail(app != NULL, G_SOURCE_REMOVE);
-  app->reconnect_source_id = 0;
-  g_message("[bit_dock] retrying IPC connection");
-
-  if (!bs_dock_app_connect_ipc(app, &error)) {
-    g_warning("[bit_dock] reconnect failed: %s",
-              error != NULL ? error->message : "unknown error");
-    bs_dock_app_set_status(app, error != NULL ? error->message : "Reconnect failed");
-    bs_dock_app_schedule_reconnect(app);
-  }
-
-  return G_SOURCE_REMOVE;
-}
-
-static void
-bs_dock_app_schedule_reconnect(BsDockApp *app) {
-  g_return_if_fail(app != NULL);
-
-  if (app->reconnect_source_id != 0) {
-    return;
-  }
-
-  g_message("[bit_dock] scheduling IPC reconnect in %u ms", BS_DOCK_RECONNECT_DELAY_MS);
-  app->reconnect_source_id = g_timeout_add(BS_DOCK_RECONNECT_DELAY_MS,
-                                           bs_dock_app_reconnect_cb,
-                                           app);
-}
-
 static bool
 bs_dock_app_send_json(BsDockApp *app, const char *json, GError **error) {
-  gsize bytes_written = 0;
-  const char newline = '\n';
-
   g_return_val_if_fail(app != NULL, false);
   g_return_val_if_fail(json != NULL, false);
 
-  if (app->output == NULL) {
-    g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED, "IPC socket is not connected");
-    return false;
-  }
-
-  if (!g_output_stream_write_all(app->output,
-                                 json,
-                                 strlen(json),
-                                 &bytes_written,
-                                 NULL,
-                                 error)) {
-    return false;
-  }
-  if (!g_output_stream_write_all(app->output,
-                                 &newline,
-                                 1,
-                                 &bytes_written,
-                                 NULL,
-                                 error)) {
-    return false;
-  }
-
-  return g_output_stream_flush(app->output, NULL, error);
+  return bs_frontend_ipc_client_send_line(app->ipc_client, json, error);
 }
 
 static void
@@ -1952,85 +1855,56 @@ bs_dock_app_handle_message(BsDockApp *app, const char *line) {
 }
 
 static void
-bs_dock_app_begin_read(BsDockApp *app) {
-  g_return_if_fail(app != NULL);
-  g_return_if_fail(app->input != NULL);
-
-  g_data_input_stream_read_line_async(app->input,
-                                      G_PRIORITY_DEFAULT,
-                                      app->read_cancellable,
-                                      bs_dock_app_on_read_line,
-                                      app);
-}
-
-static void
-bs_dock_app_on_read_line(GObject *source_object,
-                         GAsyncResult *result,
-                         gpointer user_data) {
+bs_dock_app_on_ipc_connected(BsFrontendIpcClient *client, gpointer user_data) {
   BsDockApp *app = user_data;
   g_autoptr(GError) error = NULL;
-  g_autofree char *line = NULL;
 
+  g_return_if_fail(client != NULL);
   g_return_if_fail(app != NULL);
 
-  line = g_data_input_stream_read_line_finish(G_DATA_INPUT_STREAM(source_object),
-                                              result,
-                                              NULL,
-                                              &error);
-  if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+  if (!bs_frontend_ipc_client_send_line(client, "{\"op\":\"snapshot\"}", &error)
+      || !bs_frontend_ipc_client_send_line(client,
+                                           "{\"op\":\"subscribe\",\"topics\":[\"dock\",\"settings\"]}",
+                                           &error)) {
+    g_warning("[bit_dock] IPC bootstrap failed: %s",
+              error != NULL ? error->message : "unknown error");
+    bs_dock_app_set_status(app,
+                           error != NULL ? error->message : "Failed to bootstrap dock IPC");
+    bs_frontend_ipc_client_disconnect(client);
     return;
-  }
-
-  if (line == NULL) {
-    g_warning("[bit_dock] IPC disconnected: %s",
-              error != NULL ? error->message : "Dock IPC disconnected");
-    bs_dock_app_close_connection(app);
-    bs_dock_app_set_status(app, error != NULL ? error->message : "Dock IPC disconnected");
-    bs_dock_app_schedule_reconnect(app);
-    return;
-  }
-
-  bs_dock_app_handle_message(app, line);
-  if (app->input != NULL) {
-    bs_dock_app_begin_read(app);
-  }
-}
-
-static bool
-bs_dock_app_connect_ipc(BsDockApp *app, GError **error) {
-  g_autoptr(GSocketAddress) address = NULL;
-
-  g_return_val_if_fail(app != NULL, false);
-
-  bs_dock_app_close_connection(app);
-  g_message("[bit_dock] connecting to IPC socket %s", app->socket_path);
-  address = g_unix_socket_address_new(app->socket_path);
-  app->connection = g_socket_client_connect(app->socket_client,
-                                            G_SOCKET_CONNECTABLE(address),
-                                            NULL,
-                                            error);
-  if (app->connection == NULL) {
-    return false;
-  }
-
-  app->output = g_io_stream_get_output_stream(G_IO_STREAM(app->connection));
-  app->input = g_data_input_stream_new(g_io_stream_get_input_stream(G_IO_STREAM(app->connection)));
-  g_data_input_stream_set_newline_type(app->input, G_DATA_STREAM_NEWLINE_TYPE_LF);
-
-  if (!bs_dock_app_send_json(app, "{\"op\":\"snapshot\"}", error)) {
-    bs_dock_app_close_connection(app);
-    return false;
-  }
-  if (!bs_dock_app_send_json(app, "{\"op\":\"subscribe\",\"topics\":[\"dock\",\"settings\"]}", error)) {
-    bs_dock_app_close_connection(app);
-    return false;
   }
 
   app->ipc_ready = true;
   g_message("[bit_dock] IPC connected and subscribed to dock/settings topics");
   bs_dock_app_set_status(app, "");
-  bs_dock_app_begin_read(app);
-  return true;
+}
+
+static void
+bs_dock_app_on_ipc_disconnected(BsFrontendIpcClient *client, gpointer user_data) {
+  BsDockApp *app = user_data;
+  const char *message = NULL;
+
+  g_return_if_fail(client != NULL);
+  g_return_if_fail(app != NULL);
+
+  app->ipc_ready = false;
+  message = bs_frontend_ipc_client_last_error(client);
+  g_warning("[bit_dock] IPC disconnected: %s",
+            message != NULL ? message : "Dock IPC disconnected");
+  bs_dock_app_set_status(app, message != NULL ? message : "Dock IPC disconnected");
+}
+
+static void
+bs_dock_app_on_ipc_line(BsFrontendIpcClient *client,
+                        const char *line,
+                        gpointer user_data) {
+  BsDockApp *app = user_data;
+
+  g_return_if_fail(client != NULL);
+  g_return_if_fail(line != NULL);
+  g_return_if_fail(app != NULL);
+
+  bs_dock_app_handle_message(app, line);
 }
 
 static void
@@ -2146,10 +2020,9 @@ bs_dock_app_on_activate(GtkApplication *gtk_app, gpointer user_data) {
   bs_dock_app_apply_css(app);
   gtk_window_present(app->window);
 
-  if (!app->ipc_ready && !bs_dock_app_connect_ipc(app, &error)) {
+  if (!app->ipc_ready && !bs_frontend_ipc_client_start(app->ipc_client, &error)) {
     g_warning("[bit_dock] initial IPC connect failed: %s",
               error != NULL ? error->message : "unknown error");
     bs_dock_app_set_status(app, error != NULL ? error->message : "Failed to connect to bit_shelld");
-    bs_dock_app_schedule_reconnect(app);
   }
 }

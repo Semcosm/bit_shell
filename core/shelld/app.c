@@ -290,11 +290,28 @@ bs_shelld_app_reload_settings(BsShelldApp *app,
     result->hot_applied = true;
   }
 
+  if ((plan.changed & BS_SETTINGS_RELOAD_BAR_CHANGED) != 0) {
+    if (!bs_settings_service_apply_bar_config(app->settings_service, &plan.next_config.bar)) {
+      if (tray_recreated) {
+        g_autoptr(GError) rollback_error = NULL;
+
+        if (!bs_shelld_app_recreate_tray_service(app,
+                                                 current_config->tray_watcher_name,
+                                                 &rollback_error)) {
+          g_warning("[bit_shelld] failed to rollback tray watcher after bar apply failure: %s",
+                    rollback_error != NULL ? rollback_error->message : "unknown error");
+        }
+      }
+      bs_settings_reload_plan_clear(&plan);
+      g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "failed to apply bar config");
+      return false;
+    }
+    bs_shelld_app_append_reload_key(result->hot_applied_keys, "bar.*");
+    result->hot_applied = true;
+  }
+
   if ((plan.changed & BS_SETTINGS_RELOAD_PRIMARY_OUTPUT_CHANGED) != 0) {
     bs_shelld_app_append_reload_key(result->restart_required_keys, "shell.primary_output");
-  }
-  if ((plan.changed & BS_SETTINGS_RELOAD_BAR_CHANGED) != 0) {
-    bs_shelld_app_append_reload_key(result->restart_required_keys, "bar.*");
   }
   if ((plan.changed & BS_SETTINGS_RELOAD_LAUNCHPAD_CHANGED) != 0) {
     bs_shelld_app_append_reload_key(result->restart_required_keys, "launchpad.*");

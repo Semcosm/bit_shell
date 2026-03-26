@@ -11,6 +11,7 @@
 - `bit_shelld`：唯一状态源，负责 niri IPC/event-stream、状态树、应用聚合、配置/状态持久化、本地 IPC 与命令路由
 - `bit_dock`：底部程序坞前端，负责 pinned/running 应用展示、启动/激活、多窗口切换与交互动画
 - `bit_bar`、`bit_launchpad`：设计已进入文档，但当前仓库主要已落地 `bit_shelld` 与 `bit_dock`
+- 前端共享一层轻量 Unix-socket IPC client，负责长连接、单行 JSON 收发与断线重连；业务 topic 解析仍留在各自前端内
 
 核心原则：
 

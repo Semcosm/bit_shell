@@ -884,6 +884,15 @@ bs_state_store_replace_pinned_app_ids(BsStateStore *store, GPtrArray *pinned_app
 }
 
 void
+bs_state_store_replace_bar_config(BsStateStore *store, const BsBarConfig *bar_config) {
+  g_return_if_fail(store != NULL);
+  g_return_if_fail(bar_config != NULL);
+
+  store->snapshot.bar_config = *bar_config;
+  bs_state_store_mark_topic_changed(store, BS_TOPIC_SETTINGS);
+}
+
+void
 bs_state_store_replace_dock_config(BsStateStore *store, const BsDockConfig *dock_config) {
   g_return_if_fail(store != NULL);
   g_return_if_fail(dock_config != NULL);

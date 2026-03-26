@@ -408,6 +408,13 @@ bs_json_append_settings_payload(GString *json, const BsSnapshot *snapshot) {
   g_string_append(json, "{\"config_loaded\":true,\"pinned_apps\":");
   bs_json_append_string_array(json, snapshot->pinned_app_ids);
   g_string_append_printf(json,
+                         ",\"bar\":{\"height_px\":%u,\"show_workspace_strip\":%s,\"show_focused_title\":%s,\"show_tray\":%s,\"show_clock\":%s}",
+                         snapshot->bar_config.height_px,
+                         snapshot->bar_config.show_workspace_strip ? "true" : "false",
+                         snapshot->bar_config.show_focused_title ? "true" : "false",
+                         snapshot->bar_config.show_tray ? "true" : "false",
+                         snapshot->bar_config.show_clock ? "true" : "false");
+  g_string_append_printf(json,
                          ",\"dock\":{\"icon_size_px\":%u,\"magnification_enabled\":%s,\"magnification_scale\":%.3f,\"hover_range_cap_units\":%u,\"spacing_px\":%u,\"bottom_margin_px\":%u,\"show_running_indicator\":%s,\"animate_opening_apps\":%s,\"display_mode\":\"%s\",\"center_on_primary_output\":%s}}",
                          snapshot->dock_config.icon_size_px,
                          snapshot->dock_config.magnification_enabled ? "true" : "false",
@@ -463,6 +470,11 @@ void
 bs_snapshot_init(BsSnapshot *snapshot) {
   g_return_if_fail(snapshot != NULL);
   memset(snapshot, 0, sizeof(*snapshot));
+  snapshot->bar_config.height_px = 32;
+  snapshot->bar_config.show_workspace_strip = true;
+  snapshot->bar_config.show_focused_title = true;
+  snapshot->bar_config.show_tray = true;
+  snapshot->bar_config.show_clock = true;
   bs_dock_config_init_defaults(&snapshot->dock_config);
   snapshot->windows = bs_hash_table_new_full_map(bs_hash_table_destroy_window);
   snapshot->workspaces = bs_hash_table_new_full_map(bs_hash_table_destroy_workspace);

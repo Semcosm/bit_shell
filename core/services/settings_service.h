@@ -51,6 +51,8 @@ bool bs_settings_service_load_all(BsSettingsService *service, GError **error);
 bool bs_settings_service_prepare_reload(BsSettingsService *service,
                                         BsSettingsReloadPlan *plan,
                                         GError **error);
+bool bs_settings_service_apply_bar_config(BsSettingsService *service,
+                                          const BsBarConfig *bar_config);
 bool bs_settings_service_apply_dock_config(BsSettingsService *service,
                                            const BsDockConfig *dock_config);
 bool bs_settings_service_commit_reload(BsSettingsService *service,

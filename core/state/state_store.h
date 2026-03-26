@@ -60,6 +60,7 @@ bool bs_state_store_replace_tray_item(BsStateStore *store, const BsTrayItem *ite
 bool bs_state_store_remove_tray_item(BsStateStore *store, const char *item_id);
 void bs_state_store_clear_tray_items(BsStateStore *store);
 void bs_state_store_replace_pinned_app_ids(BsStateStore *store, GPtrArray *pinned_app_ids);
+void bs_state_store_replace_bar_config(BsStateStore *store, const BsBarConfig *bar_config);
 void bs_state_store_replace_dock_config(BsStateStore *store, const BsDockConfig *dock_config);
 
 #endif

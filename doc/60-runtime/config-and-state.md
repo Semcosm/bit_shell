@@ -136,10 +136,12 @@ show_categories = true
 ## 当前边界
 
 - `config.toml` 当前已支持 `shell/bar/dock/launchpad` 标量字段的读取、类型/枚举校验与默认值覆盖；其中 Dock 配置会进一步经过统一的 `BsDockConfig` 归一化，再由前端派生为 `BsDockMetrics`。
-- 运行时 `reload_config()` 当前会热应用 `dock.*`、`shell.auto_reconnect_niri`、`shell.tray_watcher_name`。
+- `settings` topic 当前会镜像 `pinned_apps + bar + dock`，用于前端拉取启动快照和接收配置事件。
+- 运行时 `reload_config()` 当前会热应用 `bar.*`、`dock.*`、`shell.auto_reconnect_niri`、`shell.tray_watcher_name`。
 - `shell.auto_reconnect_niri` 当前会直接下发到 niri backend 的重连策略，可在运行时切换而无需重启后端。
 - `shell.tray_watcher_name` 当前会通过 app 层重建 tray service 生效；切换期间 tray state 会短暂清空后按新 watcher 重建。
 - `tray` topic 当前已有真实运行时消费者与 IPC 执行链路，但 `shell.primary_output` 仍需要重启后端后完全生效。
-- `bar.*` 与 `launchpad.*` 当前尚无运行时消费者。
+- `bar.*` 当前已由 `bit_bar` 作为运行时消费者处理，`reload_settings` 会将其报告为 `hot_applied`。
+- `launchpad.*` 当前尚无运行时消费者。
 - `config.toml` 尚未覆盖更复杂的 TOML 特性（如数组、嵌套表、内联表）。
 - `recent_apps` / `favorites` / `recent_workspaces` 仍未解析，也尚未与 launchpad 等业务状态联动。
