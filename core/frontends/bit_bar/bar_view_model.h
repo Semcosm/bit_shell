@@ -49,6 +49,18 @@ typedef enum {
   BS_BAR_VM_TRAY_READY_ITEMS,
 } BsBarVmTrayState;
 
+typedef enum {
+  BS_BAR_TRAY_VISUAL_ACTIVE = 0,
+  BS_BAR_TRAY_VISUAL_ATTENTION,
+  BS_BAR_TRAY_VISUAL_PASSIVE,
+} BsBarTrayVisualState;
+
+typedef enum {
+  BS_BAR_TRAY_PRIMARY_ACTIVATE = 0,
+  BS_BAR_TRAY_PRIMARY_MENU,
+  BS_BAR_TRAY_PRIMARY_NONE,
+} BsBarTrayPrimaryAction;
+
 typedef struct {
   char *id;
   char *name;
@@ -80,6 +92,11 @@ typedef struct {
   bool item_is_menu;
   bool has_activate;
   bool has_context_menu;
+  char *effective_icon_name;
+  char *fallback_label;
+  BsBarTrayVisualState visual_state;
+  BsBarTrayPrimaryAction primary_action;
+  bool show_by_default;
 } BsBarTrayItemView;
 
 typedef void (*BsBarVmChangedFn)(BsBarViewModel *vm,

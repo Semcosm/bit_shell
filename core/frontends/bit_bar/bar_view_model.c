@@ -108,6 +108,10 @@ static const char *bs_bar_vm_workspace_full_label(const BsBarVmWorkspace *worksp
 static char *bs_bar_vm_workspace_compact_label(const BsBarVmWorkspace *workspace);
 static BsBarWorkspacePresentation bs_bar_vm_choose_workspace_presentation(guint workspace_count,
                                                                           const BsBarVmWorkspace *workspace);
+static BsBarTrayVisualState bs_bar_vm_tray_visual_state(const BsBarVmTrayItem *item);
+static BsBarTrayPrimaryAction bs_bar_vm_tray_primary_action(const BsBarVmTrayItem *item);
+static char *bs_bar_vm_tray_effective_icon_name(const BsBarVmTrayItem *item);
+static char *bs_bar_vm_tray_fallback_label(const BsBarVmTrayItem *item);
 static void bs_bar_view_model_rebuild_workspace_strip(BsBarViewModel *vm);
 static void bs_bar_view_model_rebuild_center_state(BsBarViewModel *vm);
 static void bs_bar_view_model_rebuild_tray_items(BsBarViewModel *vm);
@@ -237,6 +241,8 @@ bs_bar_tray_item_view_free(gpointer data) {
   g_free(item->icon_name);
   g_free(item->attention_icon_name);
   g_free(item->status);
+  g_free(item->effective_icon_name);
+  g_free(item->fallback_label);
   g_free(item);
 }
 
@@ -653,6 +659,68 @@ bs_bar_vm_choose_workspace_presentation(guint workspace_count, const BsBarVmWork
   return BS_BAR_WORKSPACE_PRESENTATION_MINIMAL;
 }
 
+static BsBarTrayVisualState
+bs_bar_vm_tray_visual_state(const BsBarVmTrayItem *item) {
+  g_return_val_if_fail(item != NULL, BS_BAR_TRAY_VISUAL_PASSIVE);
+
+  if (item->status != NULL && g_strcmp0(item->status, "attention") == 0) {
+    return BS_BAR_TRAY_VISUAL_ATTENTION;
+  }
+  if (item->status != NULL && g_strcmp0(item->status, "active") == 0) {
+    return BS_BAR_TRAY_VISUAL_ACTIVE;
+  }
+  return BS_BAR_TRAY_VISUAL_PASSIVE;
+}
+
+static BsBarTrayPrimaryAction
+bs_bar_vm_tray_primary_action(const BsBarVmTrayItem *item) {
+  g_return_val_if_fail(item != NULL, BS_BAR_TRAY_PRIMARY_NONE);
+
+  if (item->has_activate) {
+    return BS_BAR_TRAY_PRIMARY_ACTIVATE;
+  }
+  if (item->item_is_menu && item->has_context_menu) {
+    return BS_BAR_TRAY_PRIMARY_MENU;
+  }
+  return BS_BAR_TRAY_PRIMARY_NONE;
+}
+
+static char *
+bs_bar_vm_tray_effective_icon_name(const BsBarVmTrayItem *item) {
+  g_return_val_if_fail(item != NULL, NULL);
+
+  if (item->status != NULL && g_strcmp0(item->status, "attention") == 0
+      && item->attention_icon_name != NULL && *item->attention_icon_name != '\0') {
+    return g_strdup(item->attention_icon_name);
+  }
+  if (item->icon_name != NULL && *item->icon_name != '\0') {
+    return g_strdup(item->icon_name);
+  }
+  return NULL;
+}
+
+static char *
+bs_bar_vm_tray_fallback_label(const BsBarVmTrayItem *item) {
+  const char *source = NULL;
+
+  g_return_val_if_fail(item != NULL, NULL);
+
+  source = item->title != NULL && *item->title != '\0' ? item->title : item->item_id;
+  if (source != NULL && *source != '\0') {
+    gunichar first = g_utf8_get_char_validated(source, -1);
+
+    if (first != (gunichar) -1 && first != (gunichar) -2 && first != 0) {
+      char buffer[8] = {0};
+      gint len = g_unichar_to_utf8(g_unichar_toupper(first), buffer);
+
+      if (len > 0) {
+        return g_strdup(buffer);
+      }
+    }
+  }
+  return g_strdup("?");
+}
+
 static gint
 bs_bar_vm_compare_workspace_ptr(gconstpointer lhs, gconstpointer rhs) {
   const BsBarWorkspaceStripItem *a = *(BsBarWorkspaceStripItem * const *) lhs;
@@ -849,6 +917,11 @@ bs_bar_view_model_rebuild_tray_items(BsBarViewModel *vm) {
     view->item_is_menu = item->item_is_menu;
     view->has_activate = item->has_activate;
     view->has_context_menu = item->has_context_menu;
+    view->effective_icon_name = bs_bar_vm_tray_effective_icon_name(item);
+    view->fallback_label = bs_bar_vm_tray_fallback_label(item);
+    view->visual_state = bs_bar_vm_tray_visual_state(item);
+    view->primary_action = bs_bar_vm_tray_primary_action(item);
+    view->show_by_default = true;
     g_ptr_array_add(vm->tray_items, view);
   }
 

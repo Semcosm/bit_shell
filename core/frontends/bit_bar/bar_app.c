@@ -84,6 +84,10 @@ static GtkWidget *bs_bar_app_build_workspace_button(BsBarApp *app,
                                                     const BsBarWorkspaceStripItem *item);
 static GtkWidget *bs_bar_app_build_window_candidate_row(BsBarApp *app,
                                                         const BsBarWindowCandidate *item);
+static GtkWidget *bs_bar_app_build_tray_content(BsBarApp *app, const BsBarTrayItemView *item);
+static void bs_bar_app_apply_tray_affordance_classes(GtkWidget *button,
+                                                     const BsBarTrayItemView *item);
+static BsBarTrayPrimaryAction bs_bar_app_get_tray_primary_action(const BsBarTrayItemView *item);
 static GtkWidget *bs_bar_app_build_tray_item_widget(BsBarApp *app,
                                                     const BsBarTrayItemView *item);
 static void bs_bar_app_request_switch_workspace(BsBarApp *app, const char *workspace_id);
@@ -315,6 +319,78 @@ bs_bar_app_build_workspace_empty_placeholder(BsBarApp *app) {
                                         "workspace-placeholder",
                                         MAX(app->metrics.workspace_min_height / 2, 10),
                                         app->metrics.workspace_min_height);
+}
+
+static GtkWidget *
+bs_bar_app_build_tray_content(BsBarApp *app, const BsBarTrayItemView *item) {
+  GtkWidget *box = NULL;
+  GtkWidget *image = NULL;
+  GtkWidget *label = NULL;
+  GdkDisplay *display = NULL;
+  GtkIconTheme *icon_theme = NULL;
+  gboolean use_icon = FALSE;
+
+  g_return_val_if_fail(app != NULL, NULL);
+  g_return_val_if_fail(item != NULL, NULL);
+
+  box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+  gtk_widget_set_halign(box, GTK_ALIGN_CENTER);
+  gtk_widget_set_valign(box, GTK_ALIGN_CENTER);
+  gtk_widget_set_size_request(box, app->metrics.tray_slot_size, app->metrics.tray_slot_size);
+
+  display = gdk_display_get_default();
+  if (display != NULL && item->effective_icon_name != NULL && *item->effective_icon_name != '\0') {
+    icon_theme = gtk_icon_theme_get_for_display(display);
+    use_icon = icon_theme != NULL && gtk_icon_theme_has_icon(icon_theme, item->effective_icon_name);
+  }
+
+  if (use_icon) {
+    image = gtk_image_new_from_icon_name(item->effective_icon_name);
+    gtk_widget_add_css_class(image, "bit-bar-tray-icon");
+    gtk_image_set_icon_size(GTK_IMAGE(image), GTK_ICON_SIZE_NORMAL);
+    gtk_box_append(GTK_BOX(box), image);
+    return box;
+  }
+
+  label = gtk_label_new(item->fallback_label != NULL ? item->fallback_label : "?");
+  gtk_widget_add_css_class(label, "bit-bar-tray-fallback");
+  gtk_label_set_single_line_mode(GTK_LABEL(label), true);
+  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+  gtk_box_append(GTK_BOX(box), label);
+  return box;
+}
+
+static void
+bs_bar_app_apply_tray_affordance_classes(GtkWidget *button, const BsBarTrayItemView *item) {
+  g_return_if_fail(button != NULL);
+  g_return_if_fail(item != NULL);
+
+  gtk_widget_add_css_class(button, "bit-bar-tray-item");
+  if (item->visual_state == BS_BAR_TRAY_VISUAL_ATTENTION) {
+    gtk_widget_add_css_class(button, "needs-attention");
+  } else if (item->visual_state == BS_BAR_TRAY_VISUAL_ACTIVE) {
+    gtk_widget_add_css_class(button, "is-active");
+  } else {
+    gtk_widget_add_css_class(button, "is-passive");
+  }
+  if (item->primary_action == BS_BAR_TRAY_PRIMARY_ACTIVATE) {
+    gtk_widget_add_css_class(button, "can-activate");
+  }
+  if (item->has_context_menu) {
+    gtk_widget_add_css_class(button, "can-context-menu");
+  }
+  if (item->item_is_menu) {
+    gtk_widget_add_css_class(button, "is-menu-item");
+  }
+  if (item->primary_action == BS_BAR_TRAY_PRIMARY_NONE && !item->has_context_menu) {
+    gtk_widget_add_css_class(button, "is-disabled");
+  }
+}
+
+static BsBarTrayPrimaryAction
+bs_bar_app_get_tray_primary_action(const BsBarTrayItemView *item) {
+  g_return_val_if_fail(item != NULL, BS_BAR_TRAY_PRIMARY_NONE);
+  return item->primary_action;
 }
 
 static BsBarMetrics
@@ -790,54 +866,24 @@ bs_bar_app_build_window_candidate_row(BsBarApp *app, const BsBarWindowCandidate 
 static GtkWidget *
 bs_bar_app_build_tray_item_widget(BsBarApp *app, const BsBarTrayItemView *item) {
   GtkWidget *button = NULL;
-  GtkWidget *label = NULL;
+  GtkWidget *content = NULL;
   GtkGesture *gesture = NULL;
-  const char *text = NULL;
 
   g_return_val_if_fail(app != NULL, NULL);
   g_return_val_if_fail(item != NULL, NULL);
 
-  if (item->status != NULL && g_strcmp0(item->status, "attention") == 0
-      && item->attention_icon_name != NULL && *item->attention_icon_name != '\0') {
-    text = item->attention_icon_name;
-  } else if (item->icon_name != NULL && *item->icon_name != '\0') {
-    text = item->icon_name;
-  } else if (item->title != NULL && *item->title != '\0') {
-    text = item->title;
-  } else {
-    text = "?";
-  }
-
   button = gtk_button_new();
-  gtk_widget_add_css_class(button, "bit-bar-tray-item");
-  if (item->status != NULL && g_strcmp0(item->status, "active") == 0) {
-    gtk_widget_add_css_class(button, "is-active");
-  } else if (item->status != NULL && g_strcmp0(item->status, "attention") == 0) {
-    gtk_widget_add_css_class(button, "needs-attention");
-  } else {
-    gtk_widget_add_css_class(button, "is-passive");
-  }
-  if (item->has_activate) {
-    gtk_widget_add_css_class(button, "can-activate");
-  }
-  if (item->has_context_menu) {
-    gtk_widget_add_css_class(button, "can-context-menu");
-  }
-  if (item->item_is_menu) {
-    gtk_widget_add_css_class(button, "is-menu-item");
-  }
-
-  label = gtk_label_new(text);
-  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
-  gtk_label_set_single_line_mode(GTK_LABEL(label), true);
-  gtk_button_set_child(GTK_BUTTON(button), label);
+  content = bs_bar_app_build_tray_content(app, item);
+  bs_bar_app_apply_tray_affordance_classes(button, item);
+  gtk_button_set_child(GTK_BUTTON(button), content);
   gtk_widget_set_size_request(button, app->metrics.tray_slot_size, app->metrics.tray_slot_size);
   gtk_widget_set_tooltip_text(button,
                               item->title != NULL && *item->title != '\0' ? item->title : item->item_id);
   g_object_set_data_full(G_OBJECT(button), "bs-bar-tray-item-id", g_strdup(item->item_id), g_free);
-  g_object_set_data(G_OBJECT(button), "bs-bar-tray-has-activate", GINT_TO_POINTER(item->has_activate));
+  g_object_set_data(G_OBJECT(button),
+                    "bs-bar-tray-primary-action",
+                    GINT_TO_POINTER((gint) item->primary_action));
   g_object_set_data(G_OBJECT(button), "bs-bar-tray-has-context-menu", GINT_TO_POINTER(item->has_context_menu));
-  g_object_set_data(G_OBJECT(button), "bs-bar-tray-item-is-menu", GINT_TO_POINTER(item->item_is_menu));
 
   gesture = gtk_gesture_click_new();
   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture), 0);
@@ -1053,9 +1099,8 @@ bs_bar_app_on_tray_item_pressed(GtkGestureClick *gesture,
   GtkWidget *widget = NULL;
   const char *item_id = NULL;
   guint button = 0;
-  bool has_activate = false;
+  BsBarTrayPrimaryAction primary_action = BS_BAR_TRAY_PRIMARY_NONE;
   bool has_context_menu = false;
-  bool item_is_menu = false;
   int anchor_x = 0;
   int anchor_y = 0;
 
@@ -1072,10 +1117,10 @@ bs_bar_app_on_tray_item_pressed(GtkGestureClick *gesture,
   }
 
   item_id = g_object_get_data(G_OBJECT(widget), "bs-bar-tray-item-id");
-  has_activate = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget), "bs-bar-tray-has-activate")) != 0;
+  primary_action = (BsBarTrayPrimaryAction) GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget),
+                                                                              "bs-bar-tray-primary-action"));
   has_context_menu = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget),
                                                        "bs-bar-tray-has-context-menu")) != 0;
-  item_is_menu = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget), "bs-bar-tray-item-is-menu")) != 0;
   button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
   if (!bs_bar_app_get_tray_item_anchor(app, widget, &anchor_x, &anchor_y)) {
     anchor_x = 0;
@@ -1083,13 +1128,13 @@ bs_bar_app_on_tray_item_pressed(GtkGestureClick *gesture,
   }
 
   if (button == GDK_BUTTON_PRIMARY) {
-    if (has_activate) {
+    if (primary_action == BS_BAR_TRAY_PRIMARY_ACTIVATE) {
       bs_bar_app_request_tray_activate(app, item_id, anchor_x, anchor_y);
-    } else if (item_is_menu || has_context_menu) {
+    } else if (primary_action == BS_BAR_TRAY_PRIMARY_MENU || has_context_menu) {
       bs_bar_app_request_tray_context_menu(app, item_id, anchor_x, anchor_y);
     }
   } else if (button == GDK_BUTTON_SECONDARY) {
-    if (has_context_menu || item_is_menu) {
+    if (has_context_menu) {
       bs_bar_app_request_tray_context_menu(app, item_id, anchor_x, anchor_y);
     }
   }
