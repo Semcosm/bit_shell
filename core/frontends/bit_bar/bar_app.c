@@ -424,13 +424,14 @@ bs_bar_app_apply_metrics(BsBarApp *app, const BsBarMetrics *metrics) {
   app->metrics = *metrics;
 
   if (app->root_box != NULL) {
-    gtk_widget_set_margin_start(app->root_box, metrics->content_margin_x);
-    gtk_widget_set_margin_end(app->root_box, metrics->content_margin_x);
+    gtk_widget_set_margin_start(app->root_box, 0);
+    gtk_widget_set_margin_end(app->root_box, 0);
     gtk_widget_set_margin_top(app->root_box, metrics->content_margin_y);
     gtk_widget_set_margin_bottom(app->root_box, metrics->content_margin_y);
   }
   if (app->left_box != NULL) {
     gtk_box_set_spacing(GTK_BOX(app->left_box), metrics->section_gap);
+    gtk_widget_set_margin_start(app->left_box, metrics->content_margin_x);
     gtk_widget_set_margin_end(app->left_box, metrics->section_gap);
   }
   if (app->center_box != NULL) {
@@ -441,6 +442,7 @@ bs_bar_app_apply_metrics(BsBarApp *app, const BsBarMetrics *metrics) {
   if (app->right_box != NULL) {
     gtk_box_set_spacing(GTK_BOX(app->right_box), metrics->trailing_cluster_gap);
     gtk_widget_set_margin_start(app->right_box, metrics->section_gap);
+    gtk_widget_set_margin_end(app->right_box, metrics->content_margin_x);
   }
   if (app->tray_cluster != NULL) {
     gtk_widget_set_halign(app->tray_cluster, GTK_ALIGN_END);
