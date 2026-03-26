@@ -32,10 +32,12 @@ struct _BsBarApp {
   GtkWidget *surface_box;
   GtkWidget *root_box;
   GtkWidget *content_box;
+  GtkWidget *edge_row;
   GtkWidget *left_box;
   GtkWidget *workspace_strip_box;
   GtkWidget *center_box;
   GtkWidget *right_box;
+  GtkWidget *center_spacer;
   GtkWidget *tray_cluster;
   GtkWidget *clock_cluster;
   GtkWidget *title_button;
@@ -54,7 +56,7 @@ struct _BsBarApp {
   BsBarMetrics metrics;
   guint pending_dirty_flags;
   guint render_source_id;
-  guint geometry_log_source_id;
+  guint post_layout_source_id;
   bool snapshot_in_flight;
   bool subscribe_sent;
   gboolean debug_layout_enabled;
@@ -72,8 +74,12 @@ static void bs_bar_app_configure_window(BsBarApp *app);
 static void bs_bar_app_ensure_window(BsBarApp *app);
 static void bs_bar_app_install_debug_css(BsBarApp *app);
 static void bs_bar_app_apply_debug_class(GtkWidget *widget, const char *css_class, gboolean enabled);
-static void bs_bar_app_schedule_geometry_log(BsBarApp *app);
-static gboolean bs_bar_app_geometry_log_cb(gpointer user_data);
+static void bs_bar_app_bind_target_monitor(BsBarApp *app);
+static GdkMonitor *bs_bar_app_select_target_monitor(BsBarApp *app);
+static GdkMonitor *bs_bar_app_lookup_monitor_by_name(const char *name);
+static void bs_bar_app_schedule_post_layout(BsBarApp *app);
+static gboolean bs_bar_app_post_layout_cb(gpointer user_data);
+static void bs_bar_app_validate_surface_width(BsBarApp *app);
 static void bs_bar_app_log_widget_geometry(const char *label, GtkWidget *widget, GtkWidget *reference);
 static void bs_bar_app_apply_layout_from_vm(BsBarApp *app);
 static void bs_bar_app_render_left_from_vm(BsBarApp *app);
@@ -176,8 +182,8 @@ bs_bar_app_free(BsBarApp *app) {
   if (app->render_source_id != 0) {
     g_source_remove(app->render_source_id);
   }
-  if (app->geometry_log_source_id != 0) {
-    g_source_remove(app->geometry_log_source_id);
+  if (app->post_layout_source_id != 0) {
+    g_source_remove(app->post_layout_source_id);
   }
   g_clear_pointer(&app->pending_workspace_switch_id, g_free);
   g_clear_pointer(&app->pending_focus_window_id, g_free);
@@ -448,6 +454,9 @@ bs_bar_app_apply_metrics(BsBarApp *app, const BsBarMetrics *metrics) {
     gtk_widget_set_margin_start(app->left_box, metrics->content_margin_x);
     gtk_widget_set_margin_end(app->left_box, metrics->section_gap);
   }
+  if (app->edge_row != NULL) {
+    gtk_box_set_spacing(GTK_BOX(app->edge_row), 0);
+  }
   if (app->center_box != NULL) {
     gtk_box_set_spacing(GTK_BOX(app->center_box), 0);
     gtk_widget_set_margin_start(app->center_box, 0);
@@ -521,9 +530,11 @@ bs_bar_app_apply_bar_config(BsBarApp *app, const BsBarConfig *config) {
                                 layer_shell_supported ? 1 : bs_bar_app_fallback_window_width(),
                                 (int) app->config.height_px);
     if (layer_shell_supported) {
+      bs_bar_app_bind_target_monitor(app);
       gtk_layer_set_exclusive_zone(app->window, (int) app->config.height_px);
     }
     bs_bar_app_apply_metrics(app, &app->metrics);
+    bs_bar_app_schedule_post_layout(app);
   }
 }
 
@@ -550,6 +561,7 @@ bs_bar_app_configure_window(BsBarApp *app) {
     gtk_layer_set_anchor(app->window, GTK_LAYER_SHELL_EDGE_LEFT, true);
     gtk_layer_set_anchor(app->window, GTK_LAYER_SHELL_EDGE_RIGHT, true);
     gtk_layer_set_keyboard_mode(app->window, GTK_LAYER_SHELL_KEYBOARD_MODE_NONE);
+    bs_bar_app_bind_target_monitor(app);
     gtk_layer_set_exclusive_zone(app->window, (int) app->config.height_px);
   } else {
     g_warning("[bit_bar] gtk-layer-shell unavailable; falling back to monitor-sized GTK window");
@@ -581,6 +593,112 @@ bs_bar_app_fallback_window_width(void) {
   gdk_monitor_get_geometry(GDK_MONITOR(item), &geometry);
   g_object_unref(item);
   return geometry.width > 0 ? geometry.width : 1280;
+}
+
+static void
+bs_bar_app_bind_target_monitor(BsBarApp *app) {
+  GdkMonitor *monitor = NULL;
+  GdkRectangle geometry = {0};
+  const char *connector = NULL;
+  const char *description = NULL;
+
+  g_return_if_fail(app != NULL);
+
+  if (app->window == NULL || !gtk_layer_is_supported()) {
+    return;
+  }
+
+  monitor = bs_bar_app_select_target_monitor(app);
+  if (monitor == NULL) {
+    g_warning("[bit_bar] failed to resolve target monitor for layer-shell window");
+    return;
+  }
+
+  connector = gdk_monitor_get_connector(monitor);
+#if GTK_CHECK_VERSION(4, 10, 0)
+  description = gdk_monitor_get_description(monitor);
+#endif
+  gdk_monitor_get_geometry(monitor, &geometry);
+  gtk_layer_set_monitor(app->window, monitor);
+  g_message("[bit_bar] bound layer-shell monitor connector=%s description=%s width=%d height=%d",
+            connector != NULL ? connector : "<unknown>",
+            description != NULL ? description : "<unknown>",
+            geometry.width,
+            geometry.height);
+}
+
+static GdkMonitor *
+bs_bar_app_select_target_monitor(BsBarApp *app) {
+  const char *focused_output_name = NULL;
+  GdkDisplay *display = NULL;
+  GListModel *monitors = NULL;
+  GdkMonitor *monitor = NULL;
+
+  g_return_val_if_fail(app != NULL, NULL);
+
+  focused_output_name = bs_bar_view_model_focused_output_name(app->view_model);
+  if (focused_output_name != NULL && *focused_output_name != '\0') {
+    monitor = bs_bar_app_lookup_monitor_by_name(focused_output_name);
+    if (monitor != NULL) {
+      return monitor;
+    }
+    g_warning("[bit_bar] focused output '%s' did not match a GDK monitor connector/description",
+              focused_output_name);
+  }
+
+  display = gdk_display_get_default();
+  if (display == NULL) {
+    return NULL;
+  }
+
+  monitors = gdk_display_get_monitors(display);
+  if (monitors == NULL || g_list_model_get_n_items(monitors) == 0) {
+    return NULL;
+  }
+
+  return GDK_MONITOR(g_list_model_get_item(monitors, 0));
+}
+
+static GdkMonitor *
+bs_bar_app_lookup_monitor_by_name(const char *name) {
+  GdkDisplay *display = NULL;
+  GListModel *monitors = NULL;
+
+  g_return_val_if_fail(name != NULL, NULL);
+
+  display = gdk_display_get_default();
+  if (display == NULL) {
+    return NULL;
+  }
+
+  monitors = gdk_display_get_monitors(display);
+  if (monitors == NULL) {
+    return NULL;
+  }
+
+  for (guint i = 0; i < g_list_model_get_n_items(monitors); i++) {
+    GdkMonitor *monitor = GDK_MONITOR(g_list_model_get_item(monitors, i));
+    const char *connector = NULL;
+    const char *description = NULL;
+    gboolean matched = FALSE;
+
+    if (monitor == NULL) {
+      continue;
+    }
+
+    connector = gdk_monitor_get_connector(monitor);
+#if GTK_CHECK_VERSION(4, 10, 0)
+    description = gdk_monitor_get_description(monitor);
+#endif
+    matched = g_strcmp0(connector, name) == 0 || g_strcmp0(description, name) == 0;
+    if (matched) {
+      return monitor;
+    }
+
+    g_object_unref(monitor);
+  }
+
+  return NULL;
 }
 
 static gboolean
@@ -646,27 +764,33 @@ bs_bar_app_apply_debug_class(GtkWidget *widget, const char *css_class, gboolean 
 }
 
 static void
-bs_bar_app_schedule_geometry_log(BsBarApp *app) {
+bs_bar_app_schedule_post_layout(BsBarApp *app) {
   g_return_if_fail(app != NULL);
 
-  if (!app->debug_layout_enabled || app->geometry_log_source_id != 0) {
+  if (app->post_layout_source_id != 0) {
     return;
   }
 
-  app->geometry_log_source_id = g_timeout_add(50, bs_bar_app_geometry_log_cb, app);
+  app->post_layout_source_id = g_timeout_add(50, bs_bar_app_post_layout_cb, app);
 }
 
 static gboolean
-bs_bar_app_geometry_log_cb(gpointer user_data) {
+bs_bar_app_post_layout_cb(gpointer user_data) {
   BsBarApp *app = user_data;
 
   g_return_val_if_fail(app != NULL, G_SOURCE_REMOVE);
 
-  app->geometry_log_source_id = 0;
+  app->post_layout_source_id = 0;
+  bs_bar_app_validate_surface_width(app);
+  if (!app->debug_layout_enabled) {
+    return G_SOURCE_REMOVE;
+  }
+
   g_message("[bit_bar] geometry snapshot begin");
   bs_bar_app_log_widget_geometry("surface", app->surface_box, NULL);
   bs_bar_app_log_widget_geometry("root", app->root_box, app->surface_box);
   bs_bar_app_log_widget_geometry("content", app->content_box, app->surface_box);
+  bs_bar_app_log_widget_geometry("edge_row", app->edge_row, app->content_box);
   bs_bar_app_log_widget_geometry("left", app->left_box, app->content_box);
   bs_bar_app_log_widget_geometry("center", app->center_box, app->content_box);
   bs_bar_app_log_widget_geometry("right", app->right_box, app->content_box);
@@ -675,6 +799,52 @@ bs_bar_app_geometry_log_cb(gpointer user_data) {
   bs_bar_app_log_widget_geometry("clock", app->clock_button, app->content_box);
   g_message("[bit_bar] geometry snapshot end");
   return G_SOURCE_REMOVE;
+}
+
+static void
+bs_bar_app_validate_surface_width(BsBarApp *app) {
+  g_autoptr(GdkMonitor) monitor = NULL;
+  GdkRectangle geometry = {0};
+  int surface_width = 0;
+  int root_width = 0;
+  int content_width = 0;
+  int delta = 0;
+
+  g_return_if_fail(app != NULL);
+
+  if (app->surface_box == NULL || app->root_box == NULL || app->content_box == NULL) {
+    return;
+  }
+
+  monitor = bs_bar_app_select_target_monitor(app);
+  if (monitor == NULL) {
+    return;
+  }
+
+  gdk_monitor_get_geometry(monitor, &geometry);
+  if (geometry.width <= 0) {
+    return;
+  }
+
+  surface_width = gtk_widget_get_width(app->surface_box);
+  root_width = gtk_widget_get_width(app->root_box);
+  content_width = gtk_widget_get_width(app->content_box);
+  delta = ABS(surface_width - geometry.width);
+
+  if (delta > 4) {
+    g_warning("[bit_bar] layer-surface width mismatch: expected=%d actual_surface=%d root=%d content=%d",
+              geometry.width,
+              surface_width,
+              root_width,
+              content_width);
+    return;
+  }
+
+  g_message("[bit_bar] layer-surface width ok: expected=%d actual_surface=%d root=%d content=%d",
+            geometry.width,
+            surface_width,
+            root_width,
+            content_width);
 }
 
 static void
@@ -725,7 +895,8 @@ bs_bar_app_ensure_window(BsBarApp *app) {
 
   app->surface_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
   app->root_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-  app->content_box = gtk_center_box_new();
+  app->content_box = gtk_overlay_new();
+  app->edge_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   gtk_widget_add_css_class(app->surface_box, "bit-bar-root");
   gtk_widget_add_css_class(app->root_box, "bit-bar-content");
   gtk_widget_set_hexpand(app->surface_box, true);
@@ -734,13 +905,15 @@ bs_bar_app_ensure_window(BsBarApp *app) {
   gtk_widget_set_halign(app->root_box, GTK_ALIGN_FILL);
   gtk_widget_set_hexpand(app->content_box, true);
   gtk_widget_set_halign(app->content_box, GTK_ALIGN_FILL);
-  gtk_orientable_set_orientation(GTK_ORIENTABLE(app->content_box), GTK_ORIENTATION_HORIZONTAL);
-  gtk_center_box_set_shrink_center_last(GTK_CENTER_BOX(app->content_box), true);
+  gtk_widget_set_vexpand(app->content_box, false);
+  gtk_widget_set_hexpand(app->edge_row, true);
+  gtk_widget_set_halign(app->edge_row, GTK_ALIGN_FILL);
 
   app->left_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   app->workspace_strip_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   app->center_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   app->right_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+  app->center_spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   app->tray_cluster = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   app->clock_cluster = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   app->title_button = gtk_button_new();
@@ -772,6 +945,7 @@ bs_bar_app_ensure_window(BsBarApp *app) {
   bs_bar_app_apply_debug_class(app->surface_box, "bit-bar-debug-surface", app->debug_layout_enabled);
   bs_bar_app_apply_debug_class(app->root_box, "bit-bar-debug-root", app->debug_layout_enabled);
   bs_bar_app_apply_debug_class(app->content_box, "bit-bar-debug-content", app->debug_layout_enabled);
+  bs_bar_app_apply_debug_class(app->edge_row, "bit-bar-debug-content", app->debug_layout_enabled);
   bs_bar_app_apply_debug_class(app->left_box, "bit-bar-debug-left", app->debug_layout_enabled);
   bs_bar_app_apply_debug_class(app->center_box, "bit-bar-debug-center", app->debug_layout_enabled);
   bs_bar_app_apply_debug_class(app->right_box, "bit-bar-debug-right", app->debug_layout_enabled);
@@ -782,6 +956,8 @@ bs_bar_app_ensure_window(BsBarApp *app) {
   gtk_widget_set_hexpand(app->left_box, false);
   gtk_widget_set_hexpand(app->center_box, false);
   gtk_widget_set_hexpand(app->right_box, false);
+  gtk_widget_set_hexpand(app->center_spacer, true);
+  gtk_widget_set_halign(app->center_spacer, GTK_ALIGN_FILL);
   gtk_widget_set_hexpand(app->tray_cluster, false);
   gtk_widget_set_hexpand(app->clock_cluster, false);
   gtk_widget_set_hexpand(app->title_button_box, false);
@@ -819,18 +995,22 @@ bs_bar_app_ensure_window(BsBarApp *app) {
 
   gtk_box_append(GTK_BOX(app->left_box), app->workspace_strip_box);
   gtk_box_append(GTK_BOX(app->center_box), app->title_button);
+  gtk_box_append(GTK_BOX(app->edge_row), app->left_box);
+  gtk_box_append(GTK_BOX(app->edge_row), app->center_spacer);
+  gtk_box_append(GTK_BOX(app->edge_row), app->right_box);
   gtk_box_append(GTK_BOX(app->tray_cluster), app->tray_strip_box);
   gtk_box_append(GTK_BOX(app->clock_cluster), app->clock_button);
   gtk_box_append(GTK_BOX(app->right_box), app->tray_cluster);
   gtk_box_append(GTK_BOX(app->right_box), app->clock_cluster);
 
-  gtk_center_box_set_start_widget(GTK_CENTER_BOX(app->content_box), app->left_box);
-  gtk_center_box_set_center_widget(GTK_CENTER_BOX(app->content_box), app->center_box);
-  gtk_center_box_set_end_widget(GTK_CENTER_BOX(app->content_box), app->right_box);
+  gtk_overlay_set_child(GTK_OVERLAY(app->content_box), app->edge_row);
+  gtk_overlay_add_overlay(GTK_OVERLAY(app->content_box), app->center_box);
+  gtk_widget_set_halign(app->center_box, GTK_ALIGN_CENTER);
+  gtk_widget_set_valign(app->center_box, GTK_ALIGN_CENTER);
   gtk_box_append(GTK_BOX(app->surface_box), app->root_box);
   gtk_box_append(GTK_BOX(app->root_box), app->content_box);
   bs_bar_app_apply_metrics(app, &app->metrics);
-  bs_bar_app_schedule_geometry_log(app);
+  bs_bar_app_schedule_post_layout(app);
 
   gtk_window_set_child(app->window, app->surface_box);
 }
@@ -847,6 +1027,7 @@ bs_bar_app_apply_layout_from_vm(BsBarApp *app) {
   }
 
   bs_bar_app_apply_bar_config(app, config);
+  bs_bar_app_bind_target_monitor(app);
   if (app->left_box != NULL) {
     gtk_widget_set_visible(app->left_box, config->show_workspace_strip);
   }
@@ -1471,7 +1652,7 @@ bs_bar_app_render_idle_cb(gpointer user_data) {
   if ((dirty_flags & BS_BAR_VM_DIRTY_RIGHT) != 0) {
     bs_bar_app_render_right_from_vm(app);
   }
-  bs_bar_app_schedule_geometry_log(app);
+  bs_bar_app_schedule_post_layout(app);
 
   return G_SOURCE_REMOVE;
 }
