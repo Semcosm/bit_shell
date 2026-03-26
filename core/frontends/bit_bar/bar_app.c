@@ -61,6 +61,8 @@ struct _BsBarApp {
   bool subscribe_sent;
   gboolean debug_layout_enabled;
   GtkCssProvider *debug_css_provider;
+  GListModel *monitors;
+  GdkMonitor *tracked_monitor;
   char *pending_workspace_switch_id;
   char *pending_focus_window_id;
 };
@@ -75,6 +77,9 @@ static void bs_bar_app_configure_window(BsBarApp *app);
 static void bs_bar_app_ensure_window(BsBarApp *app);
 static void bs_bar_app_install_debug_css(BsBarApp *app);
 static void bs_bar_app_apply_debug_class(GtkWidget *widget, const char *css_class, gboolean enabled);
+static void bs_bar_app_watch_display_monitors(BsBarApp *app);
+static void bs_bar_app_track_target_monitor(BsBarApp *app, GdkMonitor *monitor);
+static void bs_bar_app_refresh_target_monitor_layout(BsBarApp *app);
 static void bs_bar_app_bind_target_monitor(BsBarApp *app);
 static GdkMonitor *bs_bar_app_select_target_monitor(BsBarApp *app);
 static GdkMonitor *bs_bar_app_lookup_monitor_by_name(const char *name);
@@ -151,6 +156,15 @@ static void bs_bar_app_on_ipc_line(BsFrontendIpcClient *client,
                                    const char *line,
                                    gpointer user_data);
 static void bs_bar_app_on_activate(GtkApplication *gtk_app, gpointer user_data);
+static void bs_bar_app_on_monitors_changed(GListModel *model,
+                                           guint position,
+                                           guint removed,
+                                           guint added,
+                                           gpointer user_data);
+static void bs_bar_app_on_target_monitor_notify(GObject *object,
+                                                GParamSpec *pspec,
+                                                gpointer user_data);
+static void bs_bar_app_on_target_monitor_invalidate(GdkMonitor *monitor, gpointer user_data);
 
 BsBarApp *
 bs_bar_app_new(void) {
@@ -191,6 +205,14 @@ bs_bar_app_free(BsBarApp *app) {
   }
   g_clear_pointer(&app->pending_workspace_switch_id, g_free);
   g_clear_pointer(&app->pending_focus_window_id, g_free);
+  if (app->monitors != NULL) {
+    g_signal_handlers_disconnect_by_data(app->monitors, app);
+  }
+  if (app->tracked_monitor != NULL) {
+    g_signal_handlers_disconnect_by_data(app->tracked_monitor, app);
+  }
+  g_clear_object(&app->tracked_monitor);
+  g_clear_object(&app->monitors);
   g_clear_object(&app->debug_css_provider);
   bs_clock_widget_free(app->clock_widget);
   bs_frontend_ipc_client_free(app->ipc_client);
@@ -530,16 +552,11 @@ bs_bar_app_apply_bar_config(BsBarApp *app, const BsBarConfig *config) {
   app->metrics = bs_bar_metrics_from_height(app->config.height_px);
 
   if (app->window != NULL) {
-    gtk_window_set_default_size(app->window,
-                                layer_shell_supported ? bs_bar_app_target_monitor_width(app)
-                                                      : bs_bar_app_fallback_window_width(),
-                                (int) app->config.height_px);
     if (layer_shell_supported) {
       gtk_layer_set_exclusive_zone(app->window, (int) app->config.height_px);
     }
     bs_bar_app_apply_metrics(app, &app->metrics);
-    bs_bar_app_sync_width_constraints(app);
-    bs_bar_app_schedule_post_layout(app);
+    bs_bar_app_refresh_target_monitor_layout(app);
   }
 }
 
@@ -567,7 +584,6 @@ bs_bar_app_configure_window(BsBarApp *app) {
     gtk_layer_set_anchor(app->window, GTK_LAYER_SHELL_EDGE_LEFT, true);
     gtk_layer_set_anchor(app->window, GTK_LAYER_SHELL_EDGE_RIGHT, true);
     gtk_layer_set_keyboard_mode(app->window, GTK_LAYER_SHELL_KEYBOARD_MODE_NONE);
-    bs_bar_app_bind_target_monitor(app);
     gtk_layer_set_exclusive_zone(app->window, (int) app->config.height_px);
   } else {
     g_warning("[bit_bar] gtk-layer-shell unavailable; falling back to monitor-sized GTK window");
@@ -618,6 +634,91 @@ bs_bar_app_target_monitor_width(BsBarApp *app) {
 }
 
 static void
+bs_bar_app_watch_display_monitors(BsBarApp *app) {
+  GdkDisplay *display = NULL;
+
+  g_return_if_fail(app != NULL);
+
+  if (app->monitors != NULL) {
+    return;
+  }
+
+  display = gdk_display_get_default();
+  if (display == NULL) {
+    return;
+  }
+
+  app->monitors = g_object_ref(gdk_display_get_monitors(display));
+  g_signal_connect(app->monitors,
+                   "items-changed",
+                   G_CALLBACK(bs_bar_app_on_monitors_changed),
+                   app);
+}
+
+static void
+bs_bar_app_track_target_monitor(BsBarApp *app, GdkMonitor *monitor) {
+  g_return_if_fail(app != NULL);
+
+  if (monitor == app->tracked_monitor) {
+    return;
+  }
+
+  if (app->tracked_monitor != NULL) {
+    g_signal_handlers_disconnect_by_data(app->tracked_monitor, app);
+    g_clear_object(&app->tracked_monitor);
+  }
+
+  if (monitor == NULL) {
+    return;
+  }
+
+  app->tracked_monitor = g_object_ref(monitor);
+  g_signal_connect(app->tracked_monitor,
+                   "notify::geometry",
+                   G_CALLBACK(bs_bar_app_on_target_monitor_notify),
+                   app);
+  g_signal_connect(app->tracked_monitor,
+                   "notify::scale-factor",
+                   G_CALLBACK(bs_bar_app_on_target_monitor_notify),
+                   app);
+#if GTK_CHECK_VERSION(4, 14, 0)
+  g_signal_connect(app->tracked_monitor,
+                   "notify::scale",
+                   G_CALLBACK(bs_bar_app_on_target_monitor_notify),
+                   app);
+#endif
+  g_signal_connect(app->tracked_monitor,
+                   "invalidate",
+                   G_CALLBACK(bs_bar_app_on_target_monitor_invalidate),
+                   app);
+}
+
+static void
+bs_bar_app_refresh_target_monitor_layout(BsBarApp *app) {
+  g_autoptr(GdkMonitor) monitor = NULL;
+
+  g_return_if_fail(app != NULL);
+
+  if (app->window == NULL) {
+    return;
+  }
+
+  if (gtk_layer_is_supported()) {
+    monitor = bs_bar_app_select_target_monitor(app);
+    bs_bar_app_track_target_monitor(app, monitor);
+    if (monitor != NULL && gtk_layer_get_monitor(app->window) != monitor) {
+      bs_bar_app_bind_target_monitor(app);
+    }
+  }
+
+  bs_bar_app_sync_width_constraints(app);
+  if (app->surface_box != NULL) {
+    gtk_widget_queue_resize(app->surface_box);
+  }
+  bs_bar_app_schedule_post_layout(app);
+}
+
+static void
 bs_bar_app_bind_target_monitor(BsBarApp *app) {
   GdkMonitor *monitor = NULL;
   GdkRectangle geometry = {0};
@@ -641,6 +742,7 @@ bs_bar_app_bind_target_monitor(BsBarApp *app) {
   description = gdk_monitor_get_description(monitor);
 #endif
   gdk_monitor_get_geometry(monitor, &geometry);
+  bs_bar_app_track_target_monitor(app, monitor);
   gtk_layer_set_monitor(app->window, monitor);
   g_message("[bit_bar] bound layer-shell monitor connector=%s description=%s width=%d height=%d",
             connector != NULL ? connector : "<unknown>",
@@ -728,6 +830,50 @@ bs_bar_app_monitor_matches_name(GdkMonitor *monitor, const char *name) {
   description = gdk_monitor_get_description(monitor);
 #endif
   return g_strcmp0(connector, name) == 0 || g_strcmp0(description, name) == 0;
+}
+
+static void
+bs_bar_app_on_monitors_changed(GListModel *model,
+                               guint position,
+                               guint removed,
+                               guint added,
+                               gpointer user_data) {
+  BsBarApp *app = user_data;
+
+  (void) model;
+  (void) position;
+  (void) removed;
+  (void) added;
+
+  g_return_if_fail(app != NULL);
+
+  g_message("[bit_bar] display monitors changed; refreshing target monitor layout");
+  bs_bar_app_refresh_target_monitor_layout(app);
+}
+
+static void
+bs_bar_app_on_target_monitor_notify(GObject *object, GParamSpec *pspec, gpointer user_data) {
+  BsBarApp *app = user_data;
+
+  (void) object;
+
+  g_return_if_fail(app != NULL);
+  g_return_if_fail(pspec != NULL);
+
+  g_message("[bit_bar] target monitor property changed: %s", pspec->name);
+  bs_bar_app_refresh_target_monitor_layout(app);
+}
+
+static void
+bs_bar_app_on_target_monitor_invalidate(GdkMonitor *monitor, gpointer user_data) {
+  BsBarApp *app = user_data;
+
+  (void) monitor;
+
+  g_return_if_fail(app != NULL);
+
+  g_message("[bit_bar] target monitor invalidated; refreshing target monitor layout");
+  bs_bar_app_refresh_target_monitor_layout(app);
 }
 
 static gboolean
@@ -1037,6 +1183,7 @@ bs_bar_app_ensure_window(BsBarApp *app) {
 
   app->window = GTK_WINDOW(gtk_application_window_new(app->gtk_app));
   bs_bar_app_configure_window(app);
+  bs_bar_app_watch_display_monitors(app);
   gtk_widget_add_css_class(GTK_WIDGET(app->window), "bit-bar-window");
   bs_bar_app_install_debug_css(app);
 
@@ -1157,10 +1304,9 @@ bs_bar_app_ensure_window(BsBarApp *app) {
   gtk_box_append(GTK_BOX(app->surface_box), app->root_box);
   gtk_box_append(GTK_BOX(app->root_box), app->content_box);
   bs_bar_app_apply_metrics(app, &app->metrics);
-  bs_bar_app_sync_width_constraints(app);
-  bs_bar_app_schedule_post_layout(app);
 
   gtk_window_set_child(app->window, app->surface_box);
+  bs_bar_app_refresh_target_monitor_layout(app);
 }
 
 static void
@@ -1790,6 +1936,7 @@ bs_bar_app_render_idle_cb(gpointer user_data) {
   if ((dirty_flags & BS_BAR_VM_DIRTY_LAYOUT) != 0) {
     bs_bar_app_apply_layout_from_vm(app);
   }
+  bs_bar_app_refresh_target_monitor_layout(app);
   if ((dirty_flags & BS_BAR_VM_DIRTY_LEFT) != 0) {
     bs_bar_app_render_left_from_vm(app);
   }
@@ -1799,7 +1946,6 @@ bs_bar_app_render_idle_cb(gpointer user_data) {
   if ((dirty_flags & BS_BAR_VM_DIRTY_RIGHT) != 0) {
     bs_bar_app_render_right_from_vm(app);
   }
-  bs_bar_app_schedule_post_layout(app);
 
   return G_SOURCE_REMOVE;
 }
