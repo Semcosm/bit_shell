@@ -24,6 +24,25 @@ typedef enum {
   BS_BAR_VM_DIRTY_ALL = 0x0f,
 } BsBarVmDirtyFlags;
 
+typedef enum {
+  BS_BAR_VM_WORKSPACE_STRIP_LOADING = 0,
+  BS_BAR_VM_WORKSPACE_STRIP_READY_EMPTY,
+  BS_BAR_VM_WORKSPACE_STRIP_READY_ITEMS,
+} BsBarVmWorkspaceStripState;
+
+typedef enum {
+  BS_BAR_VM_CENTER_CONNECTING = 0,
+  BS_BAR_VM_CENTER_SYNCING_WINDOWS,
+  BS_BAR_VM_CENTER_READY_NO_FOCUSED_WINDOW,
+  BS_BAR_VM_CENTER_READY_FOCUSED_WINDOW,
+} BsBarVmCenterState;
+
+typedef enum {
+  BS_BAR_VM_TRAY_CONNECTING = 0,
+  BS_BAR_VM_TRAY_READY_EMPTY,
+  BS_BAR_VM_TRAY_READY_ITEMS,
+} BsBarVmTrayState;
+
 typedef struct {
   char *id;
   char *name;
@@ -77,6 +96,10 @@ const char *bs_bar_view_model_focused_output_name(BsBarViewModel *vm);
 const char *bs_bar_view_model_focused_workspace_id(BsBarViewModel *vm);
 const char *bs_bar_view_model_focused_window_id(BsBarViewModel *vm);
 bool bs_bar_view_model_show_tray(BsBarViewModel *vm);
+BsBarVmWorkspaceStripState bs_bar_view_model_workspace_strip_state(BsBarViewModel *vm);
+BsBarVmCenterState bs_bar_view_model_center_state(BsBarViewModel *vm);
+BsBarVmTrayState bs_bar_view_model_tray_state(BsBarViewModel *vm);
+bool bs_bar_view_model_can_open_window_list(BsBarViewModel *vm);
 GPtrArray *bs_bar_view_model_workspace_items(BsBarViewModel *vm);
 GPtrArray *bs_bar_view_model_window_candidates(BsBarViewModel *vm);
 GPtrArray *bs_bar_view_model_tray_items(BsBarViewModel *vm);

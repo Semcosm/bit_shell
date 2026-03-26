@@ -5,6 +5,12 @@
 #include "model/ipc.h"
 
 typedef struct {
+  bool niri_connected;
+  bool outputs_ready;
+  bool workspaces_ready;
+  bool windows_ready;
+  bool bootstrap_used_fallback;
+  char *degraded_reason;
   char *focused_output_name;
   char *focused_workspace_id;
   char *focused_window_id;
@@ -61,6 +67,9 @@ struct _BsBarViewModel {
   GPtrArray *workspace_strip_items;
   GPtrArray *window_candidates;
   GPtrArray *tray_items;
+  BsBarVmWorkspaceStripState workspace_strip_state;
+  BsBarVmCenterState center_state;
+  BsBarVmTrayState tray_state;
   char *focused_title;
   char *focused_app_name;
   bool subscribed;
@@ -94,6 +103,7 @@ static void bs_bar_view_model_parse_topic_versions(BsBarViewModel *vm,
                                                    guint64 *versions_out);
 static void bs_bar_view_model_copy_topic_versions(guint64 *dst, const guint64 *src);
 static bool bs_bar_view_model_topic_versions_equal(const guint64 *lhs, const guint64 *rhs);
+static bool bs_bar_view_model_transport_live(BsBarViewModel *vm);
 static void bs_bar_view_model_rebuild_workspace_strip(BsBarViewModel *vm);
 static void bs_bar_view_model_rebuild_center_state(BsBarViewModel *vm);
 static void bs_bar_view_model_rebuild_tray_items(BsBarViewModel *vm);
@@ -112,6 +122,12 @@ bs_bar_vm_shell_state_clear(BsBarVmShellState *shell) {
   g_clear_pointer(&shell->focused_workspace_id, g_free);
   g_clear_pointer(&shell->focused_window_id, g_free);
   g_clear_pointer(&shell->focused_window_title, g_free);
+  g_clear_pointer(&shell->degraded_reason, g_free);
+  shell->niri_connected = false;
+  shell->outputs_ready = false;
+  shell->workspaces_ready = false;
+  shell->windows_ready = false;
+  shell->bootstrap_used_fallback = false;
 }
 
 static void
@@ -331,6 +347,14 @@ bs_bar_view_model_parse_shell(BsBarViewModel *vm, JsonObject *object) {
     return;
   }
 
+  vm->shell.niri_connected = bs_bar_vm_json_bool_member(object, "niri_connected", false);
+  vm->shell.outputs_ready = bs_bar_vm_json_bool_member(object, "outputs_ready", false);
+  vm->shell.workspaces_ready = bs_bar_vm_json_bool_member(object, "workspaces_ready", false);
+  vm->shell.windows_ready = bs_bar_vm_json_bool_member(object, "windows_ready", false);
+  vm->shell.bootstrap_used_fallback = bs_bar_vm_json_bool_member(object,
+                                                                 "bootstrap_used_fallback",
+                                                                 false);
+  vm->shell.degraded_reason = g_strdup(bs_bar_vm_json_string_member(object, "degraded_reason"));
   vm->shell.focused_output_name = g_strdup(bs_bar_vm_json_string_member(object, "focused_output_name"));
   vm->shell.focused_workspace_id = g_strdup(bs_bar_vm_json_string_member(object, "focused_workspace_id"));
   vm->shell.focused_window_id = g_strdup(bs_bar_vm_json_string_member(object, "focused_window_id"));
@@ -559,6 +583,12 @@ bs_bar_view_model_topic_versions_equal(const guint64 *lhs, const guint64 *rhs) {
   return memcmp(lhs, rhs, sizeof(guint64) * BS_TOPIC_COUNT) == 0;
 }
 
+static bool
+bs_bar_view_model_transport_live(BsBarViewModel *vm) {
+  g_return_val_if_fail(vm != NULL, false);
+  return vm->phase == BS_BAR_VM_PHASE_LIVE && vm->shell.niri_connected;
+}
+
 static gint
 bs_bar_vm_compare_workspace_ptr(gconstpointer lhs, gconstpointer rhs) {
   const BsBarWorkspaceStripItem *a = *(BsBarWorkspaceStripItem * const *) lhs;
@@ -624,6 +654,13 @@ bs_bar_view_model_rebuild_workspace_strip(BsBarViewModel *vm) {
   }
 
   g_ptr_array_sort(vm->workspace_strip_items, bs_bar_vm_compare_workspace_ptr);
+  if (!bs_bar_view_model_transport_live(vm) || !vm->shell.workspaces_ready) {
+    vm->workspace_strip_state = BS_BAR_VM_WORKSPACE_STRIP_LOADING;
+  } else if (vm->workspace_strip_items->len == 0) {
+    vm->workspace_strip_state = BS_BAR_VM_WORKSPACE_STRIP_READY_EMPTY;
+  } else {
+    vm->workspace_strip_state = BS_BAR_VM_WORKSPACE_STRIP_READY_ITEMS;
+  }
 }
 
 static void
@@ -631,6 +668,7 @@ bs_bar_view_model_rebuild_center_state(BsBarViewModel *vm) {
   GHashTableIter iter;
   gpointer value = NULL;
   const BsBarVmWindow *focused_window = NULL;
+  bool has_focused_window = false;
 
   g_return_if_fail(vm != NULL);
 
@@ -673,13 +711,20 @@ bs_bar_view_model_rebuild_center_state(BsBarViewModel *vm) {
   }
 
   g_ptr_array_sort(vm->window_candidates, bs_bar_vm_compare_window_candidate_ptr);
+  if (vm->shell.focused_window_id != NULL && *vm->shell.focused_window_id != '\0') {
+    has_focused_window = true;
+  }
   if (vm->shell.focused_window_title != NULL && *vm->shell.focused_window_title != '\0') {
+    has_focused_window = true;
     vm->focused_title = g_strdup(vm->shell.focused_window_title);
   } else if (focused_window != NULL && focused_window->title != NULL && *focused_window->title != '\0') {
+    has_focused_window = true;
     vm->focused_title = g_strdup(focused_window->title);
   } else if (focused_window != NULL && focused_window->desktop_id != NULL && *focused_window->desktop_id != '\0') {
+    has_focused_window = true;
     vm->focused_title = g_strdup(focused_window->desktop_id);
   } else if (focused_window != NULL && focused_window->app_id != NULL && *focused_window->app_id != '\0') {
+    has_focused_window = true;
     vm->focused_title = g_strdup(focused_window->app_id);
   } else {
     vm->focused_title = g_strdup("No focused window");
@@ -689,6 +734,16 @@ bs_bar_view_model_rebuild_center_state(BsBarViewModel *vm) {
     vm->focused_app_name = g_strdup(focused_window->desktop_id);
   } else if (focused_window != NULL && focused_window->app_id != NULL && *focused_window->app_id != '\0') {
     vm->focused_app_name = g_strdup(focused_window->app_id);
+  }
+
+  if (!bs_bar_view_model_transport_live(vm)) {
+    vm->center_state = BS_BAR_VM_CENTER_CONNECTING;
+  } else if (!vm->shell.windows_ready) {
+    vm->center_state = BS_BAR_VM_CENTER_SYNCING_WINDOWS;
+  } else if (has_focused_window) {
+    vm->center_state = BS_BAR_VM_CENTER_READY_FOCUSED_WINDOW;
+  } else {
+    vm->center_state = BS_BAR_VM_CENTER_READY_NO_FOCUSED_WINDOW;
   }
 }
 
@@ -722,6 +777,13 @@ bs_bar_view_model_rebuild_tray_items(BsBarViewModel *vm) {
   }
 
   g_ptr_array_sort(vm->tray_items, bs_bar_vm_compare_tray_item_ptr);
+  if (!bs_bar_view_model_transport_live(vm)) {
+    vm->tray_state = BS_BAR_VM_TRAY_CONNECTING;
+  } else if (vm->tray_items->len == 0) {
+    vm->tray_state = BS_BAR_VM_TRAY_READY_EMPTY;
+  } else {
+    vm->tray_state = BS_BAR_VM_TRAY_READY_ITEMS;
+  }
 }
 
 static void
@@ -746,6 +808,9 @@ bs_bar_view_model_new(void) {
   vm->window_candidates = g_ptr_array_new_with_free_func(bs_bar_window_candidate_free);
   vm->tray_items = g_ptr_array_new_with_free_func(bs_bar_tray_item_view_free);
   vm->phase = BS_BAR_VM_PHASE_DISCONNECTED;
+  vm->workspace_strip_state = BS_BAR_VM_WORKSPACE_STRIP_LOADING;
+  vm->center_state = BS_BAR_VM_CENTER_CONNECTING;
+  vm->tray_state = BS_BAR_VM_TRAY_CONNECTING;
   vm->focused_title = g_strdup("Connecting...");
   return vm;
 }
@@ -780,6 +845,9 @@ bs_bar_view_model_reset_connection(BsBarViewModel *vm) {
   vm->phase = BS_BAR_VM_PHASE_WAITING_SNAPSHOT;
   vm->subscribed = false;
   vm->needs_resnapshot = false;
+  vm->workspace_strip_state = BS_BAR_VM_WORKSPACE_STRIP_LOADING;
+  vm->center_state = BS_BAR_VM_CENTER_CONNECTING;
+  vm->tray_state = BS_BAR_VM_TRAY_CONNECTING;
   vm->focused_title = g_strdup("Connecting...");
   bs_bar_view_model_emit_changed(vm, BS_BAR_VM_DIRTY_ALL);
 }
@@ -858,6 +926,7 @@ bs_bar_view_model_consume_json_line(BsBarViewModel *vm,
 
   if (g_strcmp0(kind, "subscribed") == 0) {
     guint64 subscribed_versions[BS_TOPIC_COUNT] = {0};
+    BsBarVmPhase previous_phase = vm->phase;
 
     vm->subscribed = true;
     if (json_object_has_member(root_object, "topic_versions")) {
@@ -874,6 +943,15 @@ bs_bar_view_model_consume_json_line(BsBarViewModel *vm,
       bs_bar_view_model_copy_topic_versions(vm->topic_versions, subscribed_versions);
     } else {
       vm->phase = BS_BAR_VM_PHASE_LIVE;
+    }
+
+    if (vm->phase != previous_phase) {
+      bs_bar_view_model_rebuild_workspace_strip(vm);
+      bs_bar_view_model_rebuild_center_state(vm);
+      bs_bar_view_model_rebuild_tray_items(vm);
+      bs_bar_view_model_emit_changed(vm,
+                                     BS_BAR_VM_DIRTY_LEFT | BS_BAR_VM_DIRTY_CENTER
+                                       | BS_BAR_VM_DIRTY_RIGHT);
     }
 
     return true;
@@ -903,7 +981,8 @@ bs_bar_view_model_consume_json_line(BsBarViewModel *vm,
       bs_bar_view_model_parse_shell(vm, payload);
       bs_bar_view_model_rebuild_workspace_strip(vm);
       bs_bar_view_model_rebuild_center_state(vm);
-      dirty_flags |= BS_BAR_VM_DIRTY_LEFT | BS_BAR_VM_DIRTY_CENTER;
+      bs_bar_view_model_rebuild_tray_items(vm);
+      dirty_flags |= BS_BAR_VM_DIRTY_LEFT | BS_BAR_VM_DIRTY_CENTER | BS_BAR_VM_DIRTY_RIGHT;
     } else if (g_strcmp0(topic, "windows") == 0) {
       bs_bar_view_model_parse_windows(vm, payload);
       bs_bar_view_model_rebuild_center_state(vm);
@@ -986,6 +1065,30 @@ bool
 bs_bar_view_model_show_tray(BsBarViewModel *vm) {
   g_return_val_if_fail(vm != NULL, false);
   return vm->bar_config.show_tray;
+}
+
+BsBarVmWorkspaceStripState
+bs_bar_view_model_workspace_strip_state(BsBarViewModel *vm) {
+  g_return_val_if_fail(vm != NULL, BS_BAR_VM_WORKSPACE_STRIP_LOADING);
+  return vm->workspace_strip_state;
+}
+
+BsBarVmCenterState
+bs_bar_view_model_center_state(BsBarViewModel *vm) {
+  g_return_val_if_fail(vm != NULL, BS_BAR_VM_CENTER_CONNECTING);
+  return vm->center_state;
+}
+
+BsBarVmTrayState
+bs_bar_view_model_tray_state(BsBarViewModel *vm) {
+  g_return_val_if_fail(vm != NULL, BS_BAR_VM_TRAY_CONNECTING);
+  return vm->tray_state;
+}
+
+bool
+bs_bar_view_model_can_open_window_list(BsBarViewModel *vm) {
+  g_return_val_if_fail(vm != NULL, false);
+  return vm->shell.windows_ready && vm->window_candidates != NULL && vm->window_candidates->len > 0;
 }
 
 GPtrArray *

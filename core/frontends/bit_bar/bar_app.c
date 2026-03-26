@@ -35,6 +35,7 @@ struct _BsBarApp {
   GtkWidget *center_box;
   GtkWidget *right_box;
   GtkWidget *title_button;
+  GtkWidget *title_label;
   GtkWidget *title_popover;
   GtkWidget *title_list_box;
   GtkWidget *tray_strip_box;
@@ -60,6 +61,17 @@ static void bs_bar_app_apply_layout_from_vm(BsBarApp *app);
 static void bs_bar_app_render_left_from_vm(BsBarApp *app);
 static void bs_bar_app_render_center_from_vm(BsBarApp *app);
 static void bs_bar_app_render_right_from_vm(BsBarApp *app);
+static GtkWidget *bs_bar_app_build_loading_capsule(BsBarApp *app,
+                                                   const char *css_role,
+                                                   int min_width,
+                                                   int min_height);
+static GtkWidget *bs_bar_app_build_empty_capsule(BsBarApp *app,
+                                                 const char *css_role,
+                                                 int min_width,
+                                                 int min_height);
+static void bs_bar_app_build_center_placeholder(BsBarApp *app,
+                                                const char *text,
+                                                bool interactive);
 static GtkWidget *bs_bar_app_build_workspace_button(BsBarApp *app,
                                                     const BsBarWorkspaceStripItem *item);
 static GtkWidget *bs_bar_app_build_window_candidate_row(BsBarApp *app,
@@ -178,6 +190,64 @@ bs_bar_app_apply_size_to_children(GtkWidget *container, int min_width, int min_h
 
     gtk_widget_set_size_request(child, child_width, min_height);
     child = next;
+  }
+}
+
+static GtkWidget *
+bs_bar_app_build_loading_capsule(BsBarApp *app, const char *css_role, int min_width, int min_height) {
+  GtkWidget *box = NULL;
+  GtkWidget *label = NULL;
+
+  g_return_val_if_fail(app != NULL, NULL);
+
+  box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+  label = gtk_label_new(NULL);
+  gtk_widget_add_css_class(box, "bit-bar-placeholder");
+  gtk_widget_add_css_class(box, "bit-bar-placeholder-loading");
+  if (css_role != NULL && *css_role != '\0') {
+    gtk_widget_add_css_class(box, css_role);
+  }
+  gtk_widget_set_size_request(box, min_width, min_height);
+  gtk_widget_set_opacity(box, 0.55);
+  gtk_box_append(GTK_BOX(box), label);
+  return box;
+}
+
+static GtkWidget *
+bs_bar_app_build_empty_capsule(BsBarApp *app, const char *css_role, int min_width, int min_height) {
+  GtkWidget *box = NULL;
+  GtkWidget *label = NULL;
+
+  g_return_val_if_fail(app != NULL, NULL);
+
+  box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+  label = gtk_label_new(NULL);
+  gtk_widget_add_css_class(box, "bit-bar-placeholder");
+  gtk_widget_add_css_class(box, "bit-bar-placeholder-empty");
+  if (css_role != NULL && *css_role != '\0') {
+    gtk_widget_add_css_class(box, css_role);
+  }
+  gtk_widget_set_size_request(box, min_width, min_height);
+  gtk_widget_set_opacity(box, 0.22);
+  gtk_box_append(GTK_BOX(box), label);
+  return box;
+}
+
+static void
+bs_bar_app_build_center_placeholder(BsBarApp *app, const char *text, bool interactive) {
+  g_return_if_fail(app != NULL);
+  g_return_if_fail(app->title_label != NULL);
+  g_return_if_fail(app->title_button != NULL);
+
+  gtk_label_set_text(GTK_LABEL(app->title_label), text != NULL ? text : "");
+  gtk_widget_set_sensitive(app->title_button, interactive);
+  if (interactive) {
+    gtk_widget_remove_css_class(app->title_button, "bit-bar-segment-disabled");
+  } else {
+    gtk_widget_add_css_class(app->title_button, "bit-bar-segment-disabled");
+    if (app->title_popover != NULL) {
+      gtk_popover_popdown(GTK_POPOVER(app->title_popover));
+    }
   }
 }
 
@@ -329,7 +399,8 @@ bs_bar_app_ensure_window(BsBarApp *app) {
   app->workspace_strip_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   app->center_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   app->right_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-  app->title_button = gtk_button_new_with_label("No focused window");
+  app->title_button = gtk_button_new();
+  app->title_label = gtk_label_new("Connecting");
   app->title_popover = gtk_popover_new();
   app->title_list_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
   app->tray_strip_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -340,6 +411,7 @@ bs_bar_app_ensure_window(BsBarApp *app) {
   gtk_widget_add_css_class(app->center_box, "bit-bar-center");
   gtk_widget_add_css_class(app->right_box, "bit-bar-right");
   gtk_widget_add_css_class(app->title_button, "bit-bar-title-button");
+  gtk_widget_add_css_class(app->title_label, "bit-bar-title-label");
   gtk_widget_add_css_class(app->title_list_box, "bit-bar-title-list");
   gtk_widget_add_css_class(app->tray_strip_box, "bit-bar-tray-strip");
 
@@ -357,6 +429,11 @@ bs_bar_app_ensure_window(BsBarApp *app) {
     gtk_label_set_wrap(GTK_LABEL(title_label), false);
     gtk_label_set_xalign(GTK_LABEL(title_label), 0.5f);
   }
+  gtk_label_set_ellipsize(GTK_LABEL(app->title_label), PANGO_ELLIPSIZE_END);
+  gtk_label_set_single_line_mode(GTK_LABEL(app->title_label), true);
+  gtk_label_set_wrap(GTK_LABEL(app->title_label), false);
+  gtk_label_set_xalign(GTK_LABEL(app->title_label), 0.5f);
+  gtk_button_set_child(GTK_BUTTON(app->title_button), app->title_label);
 
   gtk_widget_set_parent(app->title_popover, app->title_button);
   gtk_popover_set_position(GTK_POPOVER(app->title_popover), GTK_POS_BOTTOM);
@@ -415,10 +492,12 @@ static void
 bs_bar_app_render_left_from_vm(BsBarApp *app) {
   GPtrArray *items = NULL;
   GtkWidget *child = NULL;
+  BsBarVmWorkspaceStripState state = BS_BAR_VM_WORKSPACE_STRIP_LOADING;
 
   g_return_if_fail(app != NULL);
 
   items = bs_bar_view_model_workspace_items(app->view_model);
+  state = bs_bar_view_model_workspace_strip_state(app->view_model);
   if (app->workspace_strip_box == NULL) {
     return;
   }
@@ -430,8 +509,22 @@ bs_bar_app_render_left_from_vm(BsBarApp *app) {
     child = next;
   }
 
-  if (items == NULL || items->len == 0) {
-    GtkWidget *placeholder = gtk_label_new("No workspaces");
+  if (state == BS_BAR_VM_WORKSPACE_STRIP_LOADING) {
+    for (int i = 0; i < 3; i++) {
+      GtkWidget *placeholder = bs_bar_app_build_loading_capsule(app,
+                                                                "workspace-placeholder",
+                                                                app->metrics.workspace_min_height,
+                                                                app->metrics.workspace_min_height);
+
+      gtk_box_append(GTK_BOX(app->workspace_strip_box), placeholder);
+    }
+    return;
+  }
+  if (state == BS_BAR_VM_WORKSPACE_STRIP_READY_EMPTY || items == NULL || items->len == 0) {
+    GtkWidget *placeholder = bs_bar_app_build_empty_capsule(app,
+                                                            "workspace-placeholder",
+                                                            app->metrics.workspace_min_height,
+                                                            app->metrics.workspace_min_height);
 
     gtk_box_append(GTK_BOX(app->workspace_strip_box), placeholder);
     return;
@@ -452,6 +545,7 @@ bs_bar_app_render_left_from_vm(BsBarApp *app) {
 
 static void
 bs_bar_app_render_center_from_vm(BsBarApp *app) {
+  BsBarVmCenterState state = BS_BAR_VM_CENTER_CONNECTING;
   const char *title = NULL;
   const char *app_name = NULL;
   g_autofree char *text = NULL;
@@ -459,6 +553,20 @@ bs_bar_app_render_center_from_vm(BsBarApp *app) {
   g_return_if_fail(app != NULL);
 
   if (app->title_button == NULL) {
+    return;
+  }
+
+  state = bs_bar_view_model_center_state(app->view_model);
+  if (state == BS_BAR_VM_CENTER_CONNECTING) {
+    bs_bar_app_build_center_placeholder(app, "Connecting", false);
+    return;
+  }
+  if (state == BS_BAR_VM_CENTER_SYNCING_WINDOWS) {
+    bs_bar_app_build_center_placeholder(app, "Syncing windows", false);
+    return;
+  }
+  if (state == BS_BAR_VM_CENTER_READY_NO_FOCUSED_WINDOW) {
+    bs_bar_app_build_center_placeholder(app, "No focused window", false);
     return;
   }
 
@@ -471,8 +579,9 @@ bs_bar_app_render_center_from_vm(BsBarApp *app) {
   } else {
     text = g_strdup(title != NULL ? title : "No focused window");
   }
-  gtk_button_set_label(GTK_BUTTON(app->title_button), text);
-  if (gtk_widget_get_visible(app->title_popover)) {
+  bs_bar_app_build_center_placeholder(app, text, bs_bar_view_model_can_open_window_list(app->view_model));
+  if (bs_bar_view_model_can_open_window_list(app->view_model)
+      && gtk_widget_get_visible(app->title_popover)) {
     bs_bar_app_rebuild_title_popover(app);
   }
 }
@@ -481,6 +590,7 @@ static void
 bs_bar_app_render_right_from_vm(BsBarApp *app) {
   GPtrArray *items = NULL;
   GtkWidget *child = NULL;
+  BsBarVmTrayState state = BS_BAR_VM_TRAY_CONNECTING;
 
   g_return_if_fail(app != NULL);
 
@@ -489,6 +599,7 @@ bs_bar_app_render_right_from_vm(BsBarApp *app) {
   }
 
   items = bs_bar_view_model_tray_items(app->view_model);
+  state = bs_bar_view_model_tray_state(app->view_model);
   child = gtk_widget_get_first_child(app->tray_strip_box);
   while (child != NULL) {
     GtkWidget *next = gtk_widget_get_next_sibling(child);
@@ -499,8 +610,22 @@ bs_bar_app_render_right_from_vm(BsBarApp *app) {
   if (!bs_bar_view_model_show_tray(app->view_model)) {
     return;
   }
-  if (items == NULL || items->len == 0) {
-    GtkWidget *placeholder = gtk_label_new("No tray");
+  if (state == BS_BAR_VM_TRAY_CONNECTING) {
+    for (int i = 0; i < 2; i++) {
+      GtkWidget *placeholder = bs_bar_app_build_loading_capsule(app,
+                                                                "tray-placeholder",
+                                                                app->metrics.tray_slot_size,
+                                                                app->metrics.tray_slot_size);
+
+      gtk_box_append(GTK_BOX(app->tray_strip_box), placeholder);
+    }
+    return;
+  }
+  if (state == BS_BAR_VM_TRAY_READY_EMPTY || items == NULL || items->len == 0) {
+    GtkWidget *placeholder = bs_bar_app_build_empty_capsule(app,
+                                                            "tray-placeholder",
+                                                            MAX(app->metrics.tray_slot_size / 3, 8),
+                                                            app->metrics.tray_slot_size);
 
     gtk_box_append(GTK_BOX(app->tray_strip_box), placeholder);
     return;
@@ -806,6 +931,10 @@ bs_bar_app_on_title_button_clicked(GtkButton *button, gpointer user_data) {
   g_return_if_fail(GTK_IS_BUTTON(button));
   g_return_if_fail(app != NULL);
   g_return_if_fail(app->title_popover != NULL);
+
+  if (!bs_bar_view_model_can_open_window_list(app->view_model)) {
+    return;
+  }
 
   bs_bar_app_rebuild_title_popover(app);
   gtk_popover_popup(GTK_POPOVER(app->title_popover));
