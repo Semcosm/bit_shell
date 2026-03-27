@@ -10,6 +10,12 @@
 typedef struct _BsTrayRegistration BsTrayRegistration;
 typedef struct _BsTrayPendingRegistration BsTrayPendingRegistration;
 
+typedef enum {
+  BS_TRAY_CAPABILITY_UNKNOWN = 0,
+  BS_TRAY_CAPABILITY_SUPPORTED,
+  BS_TRAY_CAPABILITY_UNSUPPORTED,
+} BsTrayCapabilityState;
+
 struct _BsTrayService {
   BsStateStore *store;
   char *watcher_name;
@@ -28,6 +34,8 @@ struct _BsTrayRegistration {
   char *object_path;
   guint name_watch_id;
   GDBusProxy *item_proxy;
+  BsTrayCapabilityState activate_capability;
+  BsTrayCapabilityState context_menu_capability;
 };
 
 struct _BsTrayPendingRegistration {
@@ -73,6 +81,12 @@ static void bs_tray_service_unregister_all_items(BsTrayService *service);
 static bool bs_tray_service_refresh_registration(BsTrayRegistration *registration, GError **error);
 static char *bs_tray_service_build_item_id(const char *bus_name, const char *object_path);
 static char *bs_tray_service_dup_proxy_string(GDBusProxy *proxy, const char *property_name);
+static bool bs_tray_service_capability_projects_true(BsTrayCapabilityState capability);
+static bool bs_tray_service_set_capability(BsTrayCapabilityState *slot,
+                                           BsTrayCapabilityState next_state);
+static BsTrayCapabilityState *bs_tray_service_lookup_capability_slot(BsTrayRegistration *registration,
+                                                                     const char *method_name);
+static bool bs_tray_service_error_means_unsupported(const GError *error);
 static bool bs_tray_service_get_proxy_bool(GDBusProxy *proxy,
                                            const char *property_name,
                                            bool fallback_value);
@@ -205,6 +219,59 @@ bs_tray_service_dup_proxy_string(GDBusProxy *proxy, const char *property_name) {
   }
 
   return g_variant_dup_string(value, NULL);
+}
+
+static bool
+bs_tray_service_capability_projects_true(BsTrayCapabilityState capability) {
+  return capability != BS_TRAY_CAPABILITY_UNSUPPORTED;
+}
+
+static bool
+bs_tray_service_set_capability(BsTrayCapabilityState *slot, BsTrayCapabilityState next_state) {
+  g_return_val_if_fail(slot != NULL, false);
+
+  if (*slot == next_state) {
+    return false;
+  }
+
+  *slot = next_state;
+  return true;
+}
+
+static BsTrayCapabilityState *
+bs_tray_service_lookup_capability_slot(BsTrayRegistration *registration,
+                                       const char *method_name) {
+  g_return_val_if_fail(registration != NULL, NULL);
+  g_return_val_if_fail(method_name != NULL, NULL);
+
+  if (g_strcmp0(method_name, "Activate") == 0) {
+    return &registration->activate_capability;
+  }
+  if (g_strcmp0(method_name, "ContextMenu") == 0) {
+    return &registration->context_menu_capability;
+  }
+  return NULL;
+}
+
+static bool
+bs_tray_service_error_means_unsupported(const GError *error) {
+  g_autofree char *remote_error = NULL;
+
+  if (error == NULL) {
+    return false;
+  }
+  if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD)
+      || g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_NOT_SUPPORTED)) {
+    return true;
+  }
+
+  remote_error = g_dbus_error_get_remote_error(error);
+  if (remote_error == NULL) {
+    return false;
+  }
+
+  return g_str_has_suffix(remote_error, ".UnknownMethod")
+         || g_str_has_suffix(remote_error, ".NotSupported");
 }
 
 static bool
@@ -417,8 +484,9 @@ bs_tray_service_refresh_registration(BsTrayRegistration *registration, GError **
   item.item_is_menu = bs_tray_service_get_proxy_bool(registration->item_proxy,
                                                      "ItemIsMenu",
                                                      false);
-  item.has_activate = true;
-  item.has_context_menu = true;
+  item.has_activate = bs_tray_service_capability_projects_true(registration->activate_capability);
+  item.has_context_menu =
+    bs_tray_service_capability_projects_true(registration->context_menu_capability);
 
   (void) error;
   bs_state_store_begin_update(registration->service->store);
@@ -462,6 +530,8 @@ bs_tray_service_register_item(BsTrayService *service,
   registration->item_id = g_strdup(item_id);
   registration->bus_name = g_strdup(bus_name);
   registration->object_path = g_strdup(object_path);
+  registration->activate_capability = BS_TRAY_CAPABILITY_UNKNOWN;
+  registration->context_menu_capability = BS_TRAY_CAPABILITY_UNKNOWN;
   registration->item_proxy = g_dbus_proxy_new_sync(service->session_bus,
                                                    G_DBUS_PROXY_FLAGS_NONE,
                                                    NULL,
@@ -666,6 +736,9 @@ bs_tray_service_call_item_method(BsTrayService *service,
                                  int32_t y,
                                  GError **error) {
   BsTrayRegistration *registration = NULL;
+  BsTrayCapabilityState *capability_slot = NULL;
+  g_autoptr(GVariant) result = NULL;
+  g_autoptr(GError) refresh_error = NULL;
 
   g_return_val_if_fail(service != NULL, false);
   g_return_val_if_fail(item_id != NULL, false);
@@ -677,13 +750,35 @@ bs_tray_service_call_item_method(BsTrayService *service,
     return false;
   }
 
-  return g_dbus_proxy_call_sync(registration->item_proxy,
-                                method_name,
-                                g_variant_new("(ii)", x, y),
-                                G_DBUS_CALL_FLAGS_NONE,
-                                -1,
-                                NULL,
-                                error) != NULL;
+  capability_slot = bs_tray_service_lookup_capability_slot(registration, method_name);
+  result = g_dbus_proxy_call_sync(registration->item_proxy,
+                                  method_name,
+                                  g_variant_new("(ii)", x, y),
+                                  G_DBUS_CALL_FLAGS_NONE,
+                                  -1,
+                                  NULL,
+                                  error);
+  if (result != NULL) {
+    if (capability_slot != NULL && *capability_slot == BS_TRAY_CAPABILITY_UNKNOWN) {
+      (void) bs_tray_service_set_capability(capability_slot, BS_TRAY_CAPABILITY_SUPPORTED);
+    }
+    return true;
+  }
+
+  if (capability_slot != NULL
+      && bs_tray_service_error_means_unsupported(error != NULL ? *error : NULL)
+      && bs_tray_service_set_capability(capability_slot, BS_TRAY_CAPABILITY_UNSUPPORTED)) {
+    g_message("[bit_shelld] tray item %s downgraded %s capability to unsupported",
+              item_id,
+              method_name);
+    if (!bs_tray_service_refresh_registration(registration, &refresh_error)) {
+      g_warning("[bit_shelld] failed to refresh tray item after %s downgrade: %s",
+                method_name,
+                refresh_error != NULL ? refresh_error->message : "unknown error");
+    }
+  }
+
+  return false;
 }
 
 bool
