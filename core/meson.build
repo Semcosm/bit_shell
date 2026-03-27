@@ -67,6 +67,10 @@ bit_bar_sources = files(
   'frontends/bit_bar/bar_app.c',
   'frontends/bit_bar/bar_view_model.c',
   'frontends/bit_bar/clock_widget.c',
+  'frontends/bit_bar/tray_strip.c',
+  'frontends/bit_bar/tray_strip.h',
+  'frontends/bit_bar/tray_item_button.c',
+  'frontends/bit_bar/tray_item_button.h',
 )
 
 executable(
