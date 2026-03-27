@@ -17,5 +17,6 @@ void bs_bar_tray_strip_rebuild(GtkWidget *strip,
                                BsBarTrayItemActivateFn on_activate,
                                BsBarTrayItemMenuFn on_menu,
                                gpointer user_data);
+GtkWidget *bs_bar_tray_strip_find_item_button(GtkWidget *strip, const char *item_id);
 
 #endif

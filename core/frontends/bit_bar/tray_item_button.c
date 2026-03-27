@@ -281,3 +281,13 @@ bs_bar_tray_item_button_update(GtkWidget *button,
   state->primary_action = item->primary_action;
   state->has_context_menu = item->has_context_menu;
 }
+
+const char *
+bs_bar_tray_item_button_item_id(GtkWidget *button) {
+  BsBarTrayItemButtonState *state = NULL;
+
+  g_return_val_if_fail(button != NULL, NULL);
+
+  state = g_object_get_data(G_OBJECT(button), BS_BAR_TRAY_ITEM_BUTTON_STATE_KEY);
+  return state != NULL ? state->item_id : NULL;
+}

@@ -221,12 +221,9 @@ bs_bar_tray_menu_bridge_open(BsBarTrayMenuBridge *bridge,
     gtk_popover_popdown(GTK_POPOVER(bridge->popover));
   }
 
-  if (gtk_widget_get_first_child(bridge->shell_box) == NULL) {
-    GtkWidget *placeholder = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-
-    gtk_widget_set_size_request(placeholder, 1, 1);
-    gtk_widget_set_opacity(placeholder, 0.0);
-    bs_bar_tray_menu_bridge_set_content(bridge, placeholder);
+  if (bridge->content == NULL) {
+    g_debug("[bit_bar] tray menu bridge refused to open item=%s without content", item_id);
+    return FALSE;
   }
 
   bs_bar_tray_menu_bridge_apply_anchor(bridge, anchor);
@@ -278,6 +275,11 @@ bs_bar_tray_menu_bridge_toggle(BsBarTrayMenuBridge *bridge,
   if (bs_bar_tray_menu_bridge_is_open_for(bridge, item_id)) {
     bs_bar_tray_menu_bridge_close(bridge);
     return false;
+  }
+
+  if (bridge->content == NULL) {
+    g_debug("[bit_bar] tray menu bridge refused to toggle item=%s without content", item_id);
+    return FALSE;
   }
 
   return bs_bar_tray_menu_bridge_open(bridge, item_id, anchor);

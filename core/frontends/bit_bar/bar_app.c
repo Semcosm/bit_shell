@@ -69,6 +69,8 @@ struct _BsBarApp {
   GdkMonitor *tracked_monitor;
   char *pending_workspace_switch_id;
   char *pending_focus_window_id;
+  char *pending_tray_menu_item_id;
+  gboolean pending_tray_menu_open;
 };
 
 static BsBarMetrics bs_bar_metrics_from_height(guint32 height_px);
@@ -139,6 +141,10 @@ static void bs_bar_app_request_tray_menu_refresh(BsBarApp *app, const char *item
 static void bs_bar_app_request_tray_menu_activate(BsBarApp *app,
                                                   const char *item_id,
                                                   gint32 menu_item_id);
+static void bs_bar_app_set_pending_tray_menu_open(BsBarApp *app, const char *item_id);
+static void bs_bar_app_clear_pending_tray_menu_open(BsBarApp *app);
+static GtkWidget *bs_bar_app_lookup_tray_button(BsBarApp *app, const char *item_id);
+static void bs_bar_app_try_present_pending_tray_menu(BsBarApp *app);
 static gboolean bs_bar_app_get_tray_popup_anchor(BsBarApp *app,
                                                  GtkWidget *widget,
                                                  BsBarPopupAnchor *out_anchor);
@@ -225,6 +231,7 @@ bs_bar_app_free(BsBarApp *app) {
   }
   g_clear_pointer(&app->pending_workspace_switch_id, g_free);
   g_clear_pointer(&app->pending_focus_window_id, g_free);
+  bs_bar_app_clear_pending_tray_menu_open(app);
   if (app->monitors != NULL) {
     g_signal_handlers_disconnect_by_data(app->monitors, app);
   }
@@ -802,6 +809,7 @@ bs_bar_app_on_monitors_changed(GListModel *model,
   g_return_if_fail(app != NULL);
 
   g_message("[bit_bar] display monitors changed; refreshing target monitor layout");
+  bs_bar_app_clear_pending_tray_menu_open(app);
   bs_bar_app_close_tray_menu(app);
   bs_bar_app_refresh_target_monitor_layout(app);
 }
@@ -816,6 +824,7 @@ bs_bar_app_on_target_monitor_notify(GObject *object, GParamSpec *pspec, gpointer
   g_return_if_fail(pspec != NULL);
 
   g_message("[bit_bar] target monitor property changed: %s", pspec->name);
+  bs_bar_app_clear_pending_tray_menu_open(app);
   bs_bar_app_close_tray_menu(app);
   bs_bar_app_refresh_target_monitor_layout(app);
 }
@@ -829,6 +838,7 @@ bs_bar_app_on_target_monitor_invalidate(GdkMonitor *monitor, gpointer user_data)
   g_return_if_fail(app != NULL);
 
   g_message("[bit_bar] target monitor invalidated; refreshing target monitor layout");
+  bs_bar_app_clear_pending_tray_menu_open(app);
   bs_bar_app_close_tray_menu(app);
   bs_bar_app_refresh_target_monitor_layout(app);
 }
@@ -1300,6 +1310,7 @@ bs_bar_app_apply_layout_from_vm(BsBarApp *app) {
     gtk_widget_set_visible(app->tray_cluster, config->show_tray);
   }
   if (!config->show_tray) {
+    bs_bar_app_clear_pending_tray_menu_open(app);
     bs_bar_app_close_tray_menu(app);
   }
   if (app->clock_widget != NULL) {
@@ -1692,6 +1703,78 @@ bs_bar_app_request_tray_menu_activate(BsBarApp *app, const char *item_id, gint32
 }
 
 static gboolean
+bs_bar_app_get_tray_menu_tree_ready(const BsTrayMenuTree *tree) {
+  return tree != NULL && tree->root != NULL && tree->root->children != NULL && tree->root->children->len > 0;
+}
+
+static void
+bs_bar_app_set_pending_tray_menu_open(BsBarApp *app, const char *item_id) {
+  g_return_if_fail(app != NULL);
+  g_return_if_fail(item_id != NULL);
+
+  g_clear_pointer(&app->pending_tray_menu_item_id, g_free);
+  app->pending_tray_menu_item_id = g_strdup(item_id);
+  app->pending_tray_menu_open = TRUE;
+}
+
+static void
+bs_bar_app_clear_pending_tray_menu_open(BsBarApp *app) {
+  g_return_if_fail(app != NULL);
+
+  g_clear_pointer(&app->pending_tray_menu_item_id, g_free);
+  app->pending_tray_menu_open = FALSE;
+}
+
+static GtkWidget *
+bs_bar_app_lookup_tray_button(BsBarApp *app, const char *item_id) {
+  g_return_val_if_fail(app != NULL, NULL);
+  g_return_val_if_fail(item_id != NULL, NULL);
+
+  if (app->tray_strip_box == NULL) {
+    return NULL;
+  }
+
+  return bs_bar_tray_strip_find_item_button(app->tray_strip_box, item_id);
+}
+
+static void
+bs_bar_app_try_present_pending_tray_menu(BsBarApp *app) {
+  const BsTrayMenuTree *tree = NULL;
+  GtkWidget *button = NULL;
+  g_autofree char *item_id = NULL;
+
+  g_return_if_fail(app != NULL);
+
+  if (!app->pending_tray_menu_open || app->pending_tray_menu_item_id == NULL) {
+    return;
+  }
+
+  if (bs_bar_view_model_lookup_tray_item(app->view_model, app->pending_tray_menu_item_id) == NULL) {
+    g_debug("[bit_bar] pending tray menu item disappeared item=%s", app->pending_tray_menu_item_id);
+    bs_bar_app_clear_pending_tray_menu_open(app);
+    return;
+  }
+
+  tree = bs_bar_view_model_lookup_tray_menu(app->view_model, app->pending_tray_menu_item_id);
+  if (!bs_bar_app_get_tray_menu_tree_ready(tree)) {
+    return;
+  }
+
+  button = bs_bar_app_lookup_tray_button(app, app->pending_tray_menu_item_id);
+  if (button == NULL) {
+    g_debug("[bit_bar] pending tray menu lost button before present item=%s",
+            app->pending_tray_menu_item_id);
+    bs_bar_app_clear_pending_tray_menu_open(app);
+    return;
+  }
+
+  item_id = g_strdup(app->pending_tray_menu_item_id);
+  bs_bar_app_clear_pending_tray_menu_open(app);
+  g_debug("[bit_bar] tray menu auto-present pending item=%s", item_id);
+  bs_bar_app_open_tray_menu(app, item_id, button);
+}
+
+static gboolean
 bs_bar_app_get_tray_popup_anchor(BsBarApp *app, GtkWidget *widget, BsBarPopupAnchor *out_anchor) {
   g_autoptr(GdkMonitor) monitor = NULL;
   graphene_point_t src = GRAPHENE_POINT_INIT_ZERO;
@@ -1758,8 +1841,7 @@ bs_bar_app_open_tray_menu(BsBarApp *app, const char *item_id, GtkWidget *button)
   item = bs_bar_view_model_lookup_tray_item(app->view_model, item_id);
   tree = bs_bar_view_model_lookup_tray_menu(app->view_model, item_id);
   has_menu_object = item != NULL && item->menu_object_path != NULL && *item->menu_object_path != '\0';
-  has_shell_menu_tree = tree != NULL && tree->root != NULL && tree->root->children != NULL
-                        && tree->root->children->len > 0;
+  has_shell_menu_tree = bs_bar_app_get_tray_menu_tree_ready(tree);
 
   g_debug("[bit_bar] tray menu open item=%s has_menu_object=%d has_tree=%d revision=%u children=%u",
           item_id,
@@ -1774,6 +1856,7 @@ bs_bar_app_open_tray_menu(BsBarApp *app, const char *item_id, GtkWidget *button)
                                                      bs_bar_app_on_tray_menu_close_requested,
                                                      app);
 
+    bs_bar_app_clear_pending_tray_menu_open(app);
     if (!bs_bar_tray_menu_bridge_present(app->tray_menu_bridge,
                                          item_id,
                                          &popup_anchor,
@@ -1784,12 +1867,9 @@ bs_bar_app_open_tray_menu(BsBarApp *app, const char *item_id, GtkWidget *button)
   }
 
   if (has_menu_object) {
-    g_debug("[bit_bar] tray menu refresh pending shell-owned menu for item=%s", item_id);
+    g_debug("[bit_bar] tray menu pending refresh for menu-object item=%s", item_id);
+    bs_bar_app_set_pending_tray_menu_open(app, item_id);
     bs_bar_app_request_tray_menu_refresh(app, item_id);
-    return;
-  }
-
-  if (!bs_bar_tray_menu_bridge_toggle(app->tray_menu_bridge, item_id, &popup_anchor)) {
     return;
   }
 
@@ -1798,6 +1878,7 @@ bs_bar_app_open_tray_menu(BsBarApp *app, const char *item_id, GtkWidget *button)
     anchor_y = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "bs-bar-tray-anchor-y"));
   }
 
+  bs_bar_app_clear_pending_tray_menu_open(app);
   g_debug("[bit_bar] tray menu fallback to legacy ContextMenu for item=%s", item_id);
   bs_bar_app_request_tray_context_menu(app, item_id, anchor_x, anchor_y);
 }
@@ -1819,6 +1900,7 @@ bs_bar_app_on_tray_menu_close_requested(gpointer user_data) {
 
   g_return_if_fail(app != NULL);
 
+  bs_bar_app_clear_pending_tray_menu_open(app);
   bs_bar_app_close_tray_menu(app);
 }
 
@@ -1831,6 +1913,7 @@ bs_bar_app_on_tray_menu_item_activated(const char *item_id,
   g_return_if_fail(app != NULL);
   g_return_if_fail(item_id != NULL);
 
+  bs_bar_app_clear_pending_tray_menu_open(app);
   bs_bar_app_close_tray_menu(app);
   bs_bar_app_request_tray_menu_activate(app, item_id, menu_item_id);
 }
@@ -1880,6 +1963,7 @@ bs_bar_app_tray_item_activate_bridge(GtkWidget *button,
     anchor_y = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "bs-bar-tray-anchor-y"));
   }
 
+  bs_bar_app_clear_pending_tray_menu_open(app);
   bs_bar_app_close_tray_menu(app);
   bs_bar_app_request_tray_activate(app, item_id, anchor_x, anchor_y);
 }
@@ -1978,6 +2062,7 @@ bs_bar_app_on_window_key_pressed(GtkEventControllerKey *controller,
     return FALSE;
   }
 
+  bs_bar_app_clear_pending_tray_menu_open(app);
   bs_bar_app_close_tray_menu(app);
   return FALSE;
 }
@@ -2059,6 +2144,9 @@ bs_bar_app_render_idle_cb(gpointer user_data) {
   if ((dirty_flags & BS_BAR_VM_DIRTY_RIGHT) != 0) {
     bs_bar_app_render_right_from_vm(app);
   }
+  if ((dirty_flags & BS_BAR_VM_DIRTY_RIGHT) != 0) {
+    bs_bar_app_try_present_pending_tray_menu(app);
+  }
 
   return G_SOURCE_REMOVE;
 }
@@ -2096,6 +2184,7 @@ bs_bar_app_on_ipc_connected(BsFrontendIpcClient *client, gpointer user_data) {
 
   app->snapshot_in_flight = true;
   app->subscribe_sent = false;
+  bs_bar_app_clear_pending_tray_menu_open(app);
   bs_bar_app_close_tray_menu(app);
   bs_bar_view_model_reset_connection(app->view_model);
   snapshot_request = bs_bar_view_model_build_snapshot_request();
@@ -2115,6 +2204,7 @@ bs_bar_app_on_ipc_disconnected(BsFrontendIpcClient *client, gpointer user_data) 
 
   app->snapshot_in_flight = false;
   app->subscribe_sent = false;
+  bs_bar_app_clear_pending_tray_menu_open(app);
   bs_bar_app_close_tray_menu(app);
 }
 

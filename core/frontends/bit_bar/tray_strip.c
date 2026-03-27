@@ -72,3 +72,25 @@ bs_bar_tray_strip_rebuild(GtkWidget *strip,
     gtk_box_append(GTK_BOX(strip), button);
   }
 }
+
+GtkWidget *
+bs_bar_tray_strip_find_item_button(GtkWidget *strip, const char *item_id) {
+  GtkWidget *child = NULL;
+
+  g_return_val_if_fail(strip != NULL, NULL);
+  g_return_val_if_fail(item_id != NULL, NULL);
+
+  child = gtk_widget_get_first_child(strip);
+  while (child != NULL) {
+    GtkWidget *next = gtk_widget_get_next_sibling(child);
+    const char *button_item_id = NULL;
+
+    button_item_id = bs_bar_tray_item_button_item_id(child);
+    if (g_strcmp0(button_item_id, item_id) == 0) {
+      return child;
+    }
+    child = next;
+  }
+
+  return NULL;
+}

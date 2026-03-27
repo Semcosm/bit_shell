@@ -21,5 +21,6 @@ GtkWidget *bs_bar_tray_item_button_new(const BsBarTrayItemView *item,
 void bs_bar_tray_item_button_update(GtkWidget *button,
                                     const BsBarTrayItemView *item,
                                     int slot_size);
+const char *bs_bar_tray_item_button_item_id(GtkWidget *button);
 
 #endif
