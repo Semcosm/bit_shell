@@ -48,6 +48,7 @@ typedef struct {
   char *icon_name;
   char *attention_icon_name;
   char *status;
+  char *menu_object_path;
   bool item_is_menu;
   bool has_activate;
   bool has_context_menu;
@@ -194,6 +195,7 @@ bs_bar_vm_tray_item_free(gpointer data) {
   g_free(item->icon_name);
   g_free(item->attention_icon_name);
   g_free(item->status);
+  g_free(item->menu_object_path);
   g_free(item);
 }
 
@@ -241,6 +243,7 @@ bs_bar_tray_item_view_free(gpointer data) {
   g_free(item->icon_name);
   g_free(item->attention_icon_name);
   g_free(item->status);
+  g_free(item->menu_object_path);
   g_free(item->effective_icon_name);
   g_free(item->fallback_label);
   g_free(item);
@@ -512,6 +515,7 @@ bs_bar_view_model_parse_tray(BsBarViewModel *vm, JsonObject *object) {
     tray_item->attention_icon_name = g_strdup(bs_bar_vm_json_string_member(item,
                                                                            "attention_icon_name"));
     tray_item->status = g_strdup(bs_bar_vm_json_string_member(item, "status"));
+    tray_item->menu_object_path = g_strdup(bs_bar_vm_json_string_member(item, "menu_object_path"));
     tray_item->item_is_menu = bs_bar_vm_json_bool_member(item, "item_is_menu", false);
     tray_item->has_activate = bs_bar_vm_json_bool_member(item, "has_activate", false);
     tray_item->has_context_menu = bs_bar_vm_json_bool_member(item, "has_context_menu", false);
@@ -679,7 +683,7 @@ bs_bar_vm_tray_primary_action(const BsBarVmTrayItem *item) {
   if (item->has_activate) {
     return BS_BAR_TRAY_PRIMARY_ACTIVATE;
   }
-  if (item->item_is_menu && item->has_context_menu) {
+  if (item->has_context_menu) {
     return BS_BAR_TRAY_PRIMARY_MENU;
   }
   return BS_BAR_TRAY_PRIMARY_NONE;
@@ -914,6 +918,7 @@ bs_bar_view_model_rebuild_tray_items(BsBarViewModel *vm) {
     view->icon_name = g_strdup(item->icon_name);
     view->attention_icon_name = g_strdup(item->attention_icon_name);
     view->status = g_strdup(item->status);
+    view->menu_object_path = g_strdup(item->menu_object_path);
     view->item_is_menu = item->item_is_menu;
     view->has_activate = item->has_activate;
     view->has_context_menu = item->has_context_menu;
