@@ -90,6 +90,7 @@ typedef struct {
   char *attention_icon_name;
   char *status;
   char *menu_object_path;
+  guint64 presentation_seq;
   bool item_is_menu;
   bool has_activate;
   bool has_context_menu;

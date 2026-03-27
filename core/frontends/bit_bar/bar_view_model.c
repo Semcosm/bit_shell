@@ -49,6 +49,7 @@ typedef struct {
   char *attention_icon_name;
   char *status;
   char *menu_object_path;
+  guint64 presentation_seq;
   bool item_is_menu;
   bool has_activate;
   bool has_context_menu;
@@ -516,6 +517,7 @@ bs_bar_view_model_parse_tray(BsBarViewModel *vm, JsonObject *object) {
                                                                            "attention_icon_name"));
     tray_item->status = g_strdup(bs_bar_vm_json_string_member(item, "status"));
     tray_item->menu_object_path = g_strdup(bs_bar_vm_json_string_member(item, "menu_object_path"));
+    tray_item->presentation_seq = bs_bar_vm_json_uint64_member(item, "presentation_seq", 0);
     tray_item->item_is_menu = bs_bar_vm_json_bool_member(item, "item_is_menu", false);
     tray_item->has_activate = bs_bar_vm_json_bool_member(item, "has_activate", false);
     tray_item->has_context_menu = bs_bar_vm_json_bool_member(item, "has_context_menu", false);
@@ -754,6 +756,10 @@ static gint
 bs_bar_vm_compare_tray_item_ptr(gconstpointer lhs, gconstpointer rhs) {
   const BsBarTrayItemView *a = *(BsBarTrayItemView * const *) lhs;
   const BsBarTrayItemView *b = *(BsBarTrayItemView * const *) rhs;
+
+  if (a->presentation_seq != b->presentation_seq) {
+    return a->presentation_seq < b->presentation_seq ? -1 : 1;
+  }
   return g_strcmp0(a->item_id, b->item_id);
 }
 
@@ -919,6 +925,7 @@ bs_bar_view_model_rebuild_tray_items(BsBarViewModel *vm) {
     view->attention_icon_name = g_strdup(item->attention_icon_name);
     view->status = g_strdup(item->status);
     view->menu_object_path = g_strdup(item->menu_object_path);
+    view->presentation_seq = item->presentation_seq;
     view->item_is_menu = item->item_is_menu;
     view->has_activate = item->has_activate;
     view->has_context_menu = item->has_context_menu;
