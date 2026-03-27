@@ -4,6 +4,7 @@ struct _BsBarTrayMenuBridge {
   GtkWidget *overlay_parent;
   GtkWidget *popover;
   GtkWidget *shell_box;
+  GtkWidget *content;
   char *open_item_id;
   BsBarPopupAnchor anchor;
 };
@@ -11,6 +12,7 @@ struct _BsBarTrayMenuBridge {
 static void bs_bar_tray_menu_bridge_apply_anchor(BsBarTrayMenuBridge *bridge,
                                                  const BsBarPopupAnchor *anchor);
 static void bs_bar_tray_menu_bridge_clear_open_state(BsBarTrayMenuBridge *bridge);
+static void bs_bar_tray_menu_bridge_set_content(BsBarTrayMenuBridge *bridge, GtkWidget *content);
 static void bs_bar_tray_menu_bridge_on_closed(GtkPopover *popover, gpointer user_data);
 static gboolean bs_bar_tray_menu_bridge_on_key_pressed(GtkEventControllerKey *controller,
                                                        guint keyval,
@@ -39,6 +41,25 @@ bs_bar_tray_menu_bridge_clear_open_state(BsBarTrayMenuBridge *bridge) {
 
   g_clear_pointer(&bridge->open_item_id, g_free);
   bridge->anchor = (BsBarPopupAnchor) {0};
+}
+
+static void
+bs_bar_tray_menu_bridge_set_content(BsBarTrayMenuBridge *bridge, GtkWidget *content) {
+  GtkWidget *child = NULL;
+
+  g_return_if_fail(bridge != NULL);
+
+  child = gtk_widget_get_first_child(bridge->shell_box);
+  while (child != NULL) {
+    GtkWidget *next = gtk_widget_get_next_sibling(child);
+    gtk_box_remove(GTK_BOX(bridge->shell_box), child);
+    child = next;
+  }
+
+  bridge->content = content;
+  if (content != NULL) {
+    gtk_box_append(GTK_BOX(bridge->shell_box), content);
+  }
 }
 
 static void
@@ -141,12 +162,39 @@ bs_bar_tray_menu_bridge_open(BsBarTrayMenuBridge *bridge,
     gtk_popover_popdown(GTK_POPOVER(bridge->popover));
   }
 
+  if (gtk_widget_get_first_child(bridge->shell_box) == NULL) {
+    GtkWidget *placeholder = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+
+    gtk_widget_set_size_request(placeholder, 1, 1);
+    gtk_widget_set_opacity(placeholder, 0.0);
+    bs_bar_tray_menu_bridge_set_content(bridge, placeholder);
+  }
+
   bs_bar_tray_menu_bridge_apply_anchor(bridge, anchor);
   g_free(bridge->open_item_id);
   bridge->open_item_id = g_strdup(item_id);
   gtk_popover_popup(GTK_POPOVER(bridge->popover));
   gtk_widget_grab_focus(bridge->popover);
   return true;
+}
+
+gboolean
+bs_bar_tray_menu_bridge_present(BsBarTrayMenuBridge *bridge,
+                                const char *item_id,
+                                const BsBarPopupAnchor *anchor,
+                                GtkWidget *content) {
+  g_return_val_if_fail(bridge != NULL, FALSE);
+  g_return_val_if_fail(item_id != NULL, FALSE);
+  g_return_val_if_fail(anchor != NULL, FALSE);
+  g_return_val_if_fail(GTK_IS_WIDGET(content), FALSE);
+
+  if (bs_bar_tray_menu_bridge_is_open_for(bridge, item_id)) {
+    bs_bar_tray_menu_bridge_close(bridge);
+    return FALSE;
+  }
+
+  bs_bar_tray_menu_bridge_set_content(bridge, content);
+  return bs_bar_tray_menu_bridge_open(bridge, item_id, anchor);
 }
 
 void
@@ -156,6 +204,7 @@ bs_bar_tray_menu_bridge_close(BsBarTrayMenuBridge *bridge) {
   if (bridge->popover != NULL) {
     gtk_popover_popdown(GTK_POPOVER(bridge->popover));
   }
+  bs_bar_tray_menu_bridge_set_content(bridge, NULL);
   bs_bar_tray_menu_bridge_clear_open_state(bridge);
 }
 
@@ -183,6 +232,12 @@ bs_bar_tray_menu_bridge_is_open_for(BsBarTrayMenuBridge *bridge, const char *ite
   return bridge->open_item_id != NULL
          && g_strcmp0(bridge->open_item_id, item_id) == 0
          && gtk_widget_get_visible(bridge->popover);
+}
+
+const char *
+bs_bar_tray_menu_bridge_open_item_id(BsBarTrayMenuBridge *bridge) {
+  g_return_val_if_fail(bridge != NULL, NULL);
+  return bridge->open_item_id;
 }
 
 void

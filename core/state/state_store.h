@@ -6,6 +6,7 @@
 
 #include "model/ipc.h"
 #include "model/snapshot.h"
+#include "model/tray_menu.h"
 #include "model/types.h"
 
 typedef struct _BsStateStore BsStateStore;
@@ -28,6 +29,7 @@ uint64_t bs_state_store_topic_generation(const BsStateStore *store, BsTopic topi
 const BsWindow *bs_state_store_lookup_window(BsStateStore *store, const char *window_id);
 const BsDockItem *bs_state_store_lookup_dock_item(BsStateStore *store, const char *app_key);
 const BsTrayItem *bs_state_store_lookup_tray_item(BsStateStore *store, const char *item_id);
+const BsTrayMenuTree *bs_state_store_lookup_tray_menu(BsStateStore *store, const char *item_id);
 GPtrArray *bs_state_store_list_app_windows(BsStateStore *store, const char *app_key);
 
 void bs_state_store_begin_update(BsStateStore *store);
@@ -66,6 +68,9 @@ void bs_state_store_replace_dock_items(BsStateStore *store, GPtrArray *dock_item
 bool bs_state_store_replace_tray_item(BsStateStore *store, const BsTrayItem *item);
 bool bs_state_store_remove_tray_item(BsStateStore *store, const char *item_id);
 void bs_state_store_clear_tray_items(BsStateStore *store);
+bool bs_state_store_replace_tray_menu(BsStateStore *store, const BsTrayMenuTree *tree);
+bool bs_state_store_remove_tray_menu(BsStateStore *store, const char *item_id);
+void bs_state_store_clear_tray_menus(BsStateStore *store);
 void bs_state_store_replace_pinned_app_ids(BsStateStore *store, GPtrArray *pinned_app_ids);
 void bs_state_store_replace_bar_config(BsStateStore *store, const BsBarConfig *bar_config);
 void bs_state_store_replace_dock_config(BsStateStore *store, const BsDockConfig *dock_config);

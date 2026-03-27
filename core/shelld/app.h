@@ -10,6 +10,7 @@
 #include "services/dock_service.h"
 #include "services/launcher_service.h"
 #include "services/settings_service.h"
+#include "services/tray_menu_service.h"
 #include "services/tray_service.h"
 #include "services/workspace_service.h"
 #include "shelld/command_router.h"
@@ -66,5 +67,9 @@ bool bs_shelld_app_tray_context_menu_item(BsShelldApp *app,
                                           int32_t x,
                                           int32_t y,
                                           GError **error);
+bool bs_shelld_app_tray_menu_activate_item(BsShelldApp *app,
+                                           const char *item_id,
+                                           int32_t menu_item_id,
+                                           GError **error);
 
 #endif

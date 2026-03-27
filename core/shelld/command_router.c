@@ -185,6 +185,13 @@ bs_command_request_params_json(const BsCommandRequest *request) {
                            request->item_id);
     first = false;
   }
+  if (request->menu_item_id != 0) {
+    g_string_append_printf(json,
+                           "%s\"menu_item_id\":%d",
+                           first ? "" : ",",
+                           request->menu_item_id);
+    first = false;
+  }
   if (request->x != BS_IPC_COORD_UNSET) {
     g_string_append_printf(json,
                            "%s\"x\":%d",
@@ -381,6 +388,17 @@ bs_command_router_parse_request(BsCommandRouter *router,
       (void) bs_json_extract_int_field(payload, "x", &request->x);
       (void) bs_json_extract_int_field(payload, "y", &request->y);
       break;
+    case BS_COMMAND_TRAY_MENU_ACTIVATE:
+      if (!bs_json_extract_string_field(payload, "item_id", value_buf, sizeof(value_buf))) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "missing item_id");
+        return false;
+      }
+      request->item_id = g_strdup(value_buf);
+      if (!bs_json_extract_int_field(payload, "menu_item_id", &request->menu_item_id)) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "missing menu_item_id");
+        return false;
+      }
+      break;
     case BS_COMMAND_SNAPSHOT:
     case BS_COMMAND_RELOAD_SETTINGS:
     case BS_COMMAND_TOGGLE_LAUNCHPAD:
@@ -495,6 +513,15 @@ bs_command_router_handle_request(BsCommandRouter *router,
                                                 request->x,
                                                 request->y,
                                                 error)) {
+        return false;
+      }
+      *response_json = bs_command_router_build_ack_json(request, true);
+      return true;
+    case BS_COMMAND_TRAY_MENU_ACTIVATE:
+      if (!bs_shelld_app_tray_menu_activate_item(router->app,
+                                                 request->item_id,
+                                                 request->menu_item_id,
+                                                 error)) {
         return false;
       }
       *response_json = bs_command_router_build_ack_json(request, true);

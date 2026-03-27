@@ -15,6 +15,7 @@ struct _BsShelldApp {
   BsWorkspaceService *workspace_service;
   BsDockService *dock_service;
   BsLauncherService *launcher_service;
+  BsTrayMenuService *tray_menu_service;
   BsTrayService *tray_service;
   BsSettingsService *settings_service;
   BsConfigWatcher *config_watcher;
@@ -92,6 +93,8 @@ bs_shelld_app_new(const BsShelldConfig *config) {
   app->launcher_service = bs_launcher_service_new(app->state_store);
 
   tray_config.watcher_name = app->config.tray_watcher_name;
+  app->tray_menu_service = bs_tray_menu_service_new(app->state_store);
+  tray_config.menu_service = app->tray_menu_service;
   app->tray_service = bs_tray_service_new(app->state_store, &tray_config);
 
   settings_config.config_path = app->config.paths.config_path;
@@ -125,6 +128,7 @@ bs_shelld_app_free(BsShelldApp *app) {
   bs_config_watcher_free(app->config_watcher);
   bs_settings_service_free(app->settings_service);
   bs_tray_service_free(app->tray_service);
+  bs_tray_menu_service_free(app->tray_menu_service);
   bs_launcher_service_free(app->launcher_service);
   bs_dock_service_free(app->dock_service);
   bs_workspace_service_free(app->workspace_service);
@@ -166,6 +170,10 @@ bs_shelld_app_start(BsShelldApp *app, GError **error) {
     return false;
   }
 
+  if (!bs_tray_menu_service_start(app->tray_menu_service, error)) {
+    return false;
+  }
+
   if (!bs_tray_service_start(app->tray_service, error)) {
     return false;
   }
@@ -200,6 +208,7 @@ bs_shelld_app_stop(BsShelldApp *app) {
   }
   bs_ipc_server_stop(app->ipc_server);
   bs_tray_service_stop(app->tray_service);
+  bs_tray_menu_service_stop(app->tray_menu_service);
   bs_niri_backend_stop(app->niri_backend);
   bs_app_registry_stop(app->app_registry);
   (void) bs_settings_service_flush_state(app->settings_service, NULL);
@@ -843,4 +852,18 @@ bs_shelld_app_tray_context_menu_item(BsShelldApp *app,
   g_return_val_if_fail(item_id != NULL, false);
 
   return bs_tray_service_context_menu_item(app->tray_service, item_id, x, y, error);
+}
+
+bool
+bs_shelld_app_tray_menu_activate_item(BsShelldApp *app,
+                                      const char *item_id,
+                                      int32_t menu_item_id,
+                                      GError **error) {
+  g_return_val_if_fail(app != NULL, false);
+  g_return_val_if_fail(item_id != NULL, false);
+
+  return bs_tray_menu_service_activate_menu_item(app->tray_menu_service,
+                                                 item_id,
+                                                 menu_item_id,
+                                                 error);
 }

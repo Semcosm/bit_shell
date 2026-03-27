@@ -14,6 +14,7 @@ static const BsNameMap bs_topic_names[] = {
   {"workspaces", BS_TOPIC_WORKSPACES},
   {"dock", BS_TOPIC_DOCK},
   {"tray", BS_TOPIC_TRAY},
+  {"tray_menu", BS_TOPIC_TRAY_MENU},
   {"settings", BS_TOPIC_SETTINGS},
 };
 
@@ -32,6 +33,7 @@ static const BsNameMap bs_command_names[] = {
   {"unpin_app", BS_COMMAND_UNPIN_APP},
   {"tray_activate", BS_COMMAND_TRAY_ACTIVATE},
   {"tray_context_menu", BS_COMMAND_TRAY_CONTEXT_MENU},
+  {"tray_menu_activate", BS_COMMAND_TRAY_MENU_ACTIVATE},
 };
 
 static const char *
@@ -189,6 +191,7 @@ bs_command_request_init(BsCommandRequest *request) {
   g_return_if_fail(request != NULL);
   memset(request, 0, sizeof(*request));
   request->command = BS_COMMAND_INVALID;
+  request->menu_item_id = 0;
   request->x = BS_IPC_COORD_UNSET;
   request->y = BS_IPC_COORD_UNSET;
   bs_topic_set_clear(&request->topics);
@@ -206,6 +209,7 @@ bs_command_request_clear(BsCommandRequest *request) {
   g_clear_pointer(&request->workspace_id, g_free);
   g_clear_pointer(&request->item_id, g_free);
   request->command = BS_COMMAND_INVALID;
+  request->menu_item_id = 0;
   request->x = BS_IPC_COORD_UNSET;
   request->y = BS_IPC_COORD_UNSET;
   bs_topic_set_clear(&request->topics);

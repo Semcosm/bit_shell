@@ -5,6 +5,7 @@
 #include <stdbool.h>
 
 #include "model/config.h"
+#include "model/tray_menu.h"
 #include "model/types.h"
 
 typedef struct _BsBarViewModel BsBarViewModel;
@@ -135,6 +136,8 @@ bool bs_bar_view_model_can_open_window_list(BsBarViewModel *vm);
 GPtrArray *bs_bar_view_model_workspace_items(BsBarViewModel *vm);
 GPtrArray *bs_bar_view_model_window_candidates(BsBarViewModel *vm);
 GPtrArray *bs_bar_view_model_tray_items(BsBarViewModel *vm);
+const BsTrayMenuTree *bs_bar_view_model_lookup_tray_menu(BsBarViewModel *vm,
+                                                         const char *item_id);
 
 char *bs_bar_view_model_build_snapshot_request(void);
 char *bs_bar_view_model_build_subscribe_request(void);

@@ -2,6 +2,7 @@
 #include "frontends/bit_bar/bar_view_model.h"
 #include "frontends/bit_bar/clock_widget.h"
 #include "frontends/bit_bar/tray_menu_bridge.h"
+#include "frontends/bit_bar/tray_menu_view.h"
 #include "frontends/bit_bar/tray_strip.h"
 #include "frontends/common/ipc_client.h"
 
@@ -134,6 +135,9 @@ static void bs_bar_app_request_tray_context_menu(BsBarApp *app,
                                                  const char *item_id,
                                                  int x,
                                                  int y);
+static void bs_bar_app_request_tray_menu_activate(BsBarApp *app,
+                                                  const char *item_id,
+                                                  gint32 menu_item_id);
 static gboolean bs_bar_app_get_tray_popup_anchor(BsBarApp *app,
                                                  GtkWidget *widget,
                                                  BsBarPopupAnchor *out_anchor);
@@ -141,6 +145,9 @@ static void bs_bar_app_open_tray_menu(BsBarApp *app,
                                       const char *item_id,
                                       GtkWidget *button);
 static void bs_bar_app_close_tray_menu(BsBarApp *app);
+static void bs_bar_app_on_tray_menu_item_activated(const char *item_id,
+                                                   gint32 menu_item_id,
+                                                   gpointer user_data);
 static bool bs_bar_app_get_tray_item_anchor(BsBarApp *app,
                                             GtkWidget *widget,
                                             int *out_x,
@@ -1643,6 +1650,23 @@ bs_bar_app_request_tray_context_menu(BsBarApp *app, const char *item_id, int x, 
   }
 }
 
+static void
+bs_bar_app_request_tray_menu_activate(BsBarApp *app, const char *item_id, gint32 menu_item_id) {
+  g_autofree char *request = NULL;
+  g_autoptr(GError) error = NULL;
+
+  g_return_if_fail(app != NULL);
+  g_return_if_fail(item_id != NULL);
+
+  request = g_strdup_printf("{\"op\":\"tray_menu_activate\",\"item_id\":\"%s\",\"menu_item_id\":%d}",
+                            item_id,
+                            menu_item_id);
+  if (!bs_frontend_ipc_client_send_line(app->ipc_client, request, &error)) {
+    g_warning("[bit_bar] tray_menu_activate request failed: %s",
+              error != NULL ? error->message : "unknown error");
+  }
+}
+
 static gboolean
 bs_bar_app_get_tray_popup_anchor(BsBarApp *app, GtkWidget *widget, BsBarPopupAnchor *out_anchor) {
   g_autoptr(GdkMonitor) monitor = NULL;
@@ -1680,6 +1704,7 @@ bs_bar_app_get_tray_popup_anchor(BsBarApp *app, GtkWidget *widget, BsBarPopupAnc
 
 static void
 bs_bar_app_open_tray_menu(BsBarApp *app, const char *item_id, GtkWidget *button) {
+  const BsTrayMenuTree *tree = NULL;
   BsBarPopupAnchor popup_anchor = {0};
   int anchor_x = 0;
   int anchor_y = 0;
@@ -1703,6 +1728,21 @@ bs_bar_app_open_tray_menu(BsBarApp *app, const char *item_id, GtkWidget *button)
     gtk_popover_popdown(GTK_POPOVER(app->clock_popover));
   }
 
+  tree = bs_bar_view_model_lookup_tray_menu(app->view_model, item_id);
+  if (tree != NULL && tree->root != NULL && tree->root->children != NULL && tree->root->children->len > 0) {
+    GtkWidget *menu_view = bs_bar_tray_menu_view_new(tree,
+                                                     bs_bar_app_on_tray_menu_item_activated,
+                                                     app);
+
+    if (!bs_bar_tray_menu_bridge_present(app->tray_menu_bridge,
+                                         item_id,
+                                         &popup_anchor,
+                                         menu_view)) {
+      return;
+    }
+    return;
+  }
+
   if (!bs_bar_tray_menu_bridge_toggle(app->tray_menu_bridge, item_id, &popup_anchor)) {
     return;
   }
@@ -1724,6 +1764,19 @@ bs_bar_app_close_tray_menu(BsBarApp *app) {
   }
 
   bs_bar_tray_menu_bridge_close(app->tray_menu_bridge);
+}
+
+static void
+bs_bar_app_on_tray_menu_item_activated(const char *item_id,
+                                       gint32 menu_item_id,
+                                       gpointer user_data) {
+  BsBarApp *app = user_data;
+
+  g_return_if_fail(app != NULL);
+  g_return_if_fail(item_id != NULL);
+
+  bs_bar_app_close_tray_menu(app);
+  bs_bar_app_request_tray_menu_activate(app, item_id, menu_item_id);
 }
 
 static bool

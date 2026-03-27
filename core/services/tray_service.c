@@ -18,6 +18,7 @@ typedef enum {
 
 struct _BsTrayService {
   BsStateStore *store;
+  BsTrayMenuService *menu_service;
   char *watcher_name;
   bool running;
   guint64 next_presentation_seq;
@@ -383,6 +384,9 @@ bs_tray_service_new(BsStateStore *store, const BsTrayServiceConfig *config) {
   if (config != NULL && config->watcher_name != NULL) {
     service->watcher_name = g_strdup(config->watcher_name);
   }
+  if (config != NULL) {
+    service->menu_service = config->menu_service;
+  }
   service->registrations = g_hash_table_new_full(g_str_hash,
                                                  g_str_equal,
                                                  g_free,
@@ -462,6 +466,9 @@ bs_tray_service_start(BsTrayService *service, GError **error) {
   service->running = true;
   service->next_presentation_seq = 1;
   bs_state_store_clear_tray_items(service->store);
+  if (service->menu_service != NULL) {
+    bs_tray_menu_service_clear_items(service->menu_service);
+  }
   bs_state_store_mark_topic_changed(service->store, BS_TOPIC_TRAY);
   return true;
 }
@@ -484,6 +491,9 @@ bs_tray_service_stop(BsTrayService *service) {
   g_clear_pointer(&service->watcher_node_info, g_dbus_node_info_unref);
   g_clear_object(&service->session_bus);
   bs_state_store_clear_tray_items(service->store);
+  if (service->menu_service != NULL) {
+    bs_tray_menu_service_clear_items(service->menu_service);
+  }
   service->running = false;
 }
 
@@ -511,6 +521,9 @@ bs_tray_service_unregister_item(BsTrayService *service, const char *item_id) {
   bs_state_store_begin_update(service->store);
   (void) bs_state_store_remove_tray_item(service->store, item_id);
   bs_state_store_finish_update(service->store);
+  if (service->menu_service != NULL) {
+    (void) bs_tray_menu_service_remove_item(service->menu_service, item_id);
+  }
 
   if (service->session_bus != NULL) {
     g_dbus_connection_emit_signal(service->session_bus,
@@ -566,6 +579,15 @@ bs_tray_service_refresh_registration(BsTrayRegistration *registration, GError **
   bs_state_store_begin_update(registration->service->store);
   (void) bs_state_store_replace_tray_item(registration->service->store, &item);
   bs_state_store_finish_update(registration->service->store);
+  if (registration->service->menu_service != NULL) {
+    g_autoptr(GError) menu_error = NULL;
+
+    if (!bs_tray_menu_service_sync_item(registration->service->menu_service, &item, &menu_error)) {
+      g_warning("[bit_shelld] tray menu sync failed for %s: %s",
+                registration->item_id,
+                menu_error != NULL ? menu_error->message : "unknown error");
+    }
+  }
   bs_tray_item_clear(&item);
   return true;
 }

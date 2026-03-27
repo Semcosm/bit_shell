@@ -22,12 +22,17 @@ void bs_bar_tray_menu_bridge_free(BsBarTrayMenuBridge *bridge);
 gboolean bs_bar_tray_menu_bridge_open(BsBarTrayMenuBridge *bridge,
                                       const char *item_id,
                                       const BsBarPopupAnchor *anchor);
+gboolean bs_bar_tray_menu_bridge_present(BsBarTrayMenuBridge *bridge,
+                                         const char *item_id,
+                                         const BsBarPopupAnchor *anchor,
+                                         GtkWidget *content);
 void bs_bar_tray_menu_bridge_close(BsBarTrayMenuBridge *bridge);
 gboolean bs_bar_tray_menu_bridge_toggle(BsBarTrayMenuBridge *bridge,
                                         const char *item_id,
                                         const BsBarPopupAnchor *anchor);
 gboolean bs_bar_tray_menu_bridge_is_open_for(BsBarTrayMenuBridge *bridge,
                                              const char *item_id);
+const char *bs_bar_tray_menu_bridge_open_item_id(BsBarTrayMenuBridge *bridge);
 void bs_bar_tray_menu_bridge_handle_shell_reset(BsBarTrayMenuBridge *bridge);
 
 #endif

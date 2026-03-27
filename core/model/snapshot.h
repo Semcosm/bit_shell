@@ -6,6 +6,7 @@
 
 #include "model/config.h"
 #include "model/ipc.h"
+#include "model/tray_menu.h"
 #include "model/types.h"
 
 typedef struct {
@@ -18,6 +19,7 @@ typedef struct {
   GHashTable *apps;
   GHashTable *dock_items;
   GHashTable *tray_items;
+  GHashTable *tray_menus;
   GPtrArray *pinned_app_ids;
   BsBarConfig bar_config;
   BsDockConfig dock_config;

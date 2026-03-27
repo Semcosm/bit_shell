@@ -20,6 +20,8 @@
 - tray 优先按图标渲染：theme icon 优先，其次使用应用提供的 pixmap，文本只作最终回退；无 tray item 时右侧不显示错误文案
 - tray 顺序以 shell 提供的稳定展示序为准：属性刷新不重排，新项追加到尾部，重注册项视为新项
 - tray 菜单当前经前端 bridge 统一管理生命周期：一次只允许一个 popup 打开；点同一 item 再次触发会关闭，切到另一 item 会先关闭旧 popup 再打开新 popup
+- tray 菜单内容当前走 shell-owned `tray_menu` topic：`bit_bar` 只渲染 shell 下发的菜单树，并把点击回传成 `tray_menu_activate`
+- 若某个 item 尚未同步到 shell-owned 菜单树，`bit_bar` 仍回退到既有 `tray_context_menu -> ContextMenu(x, y)` 透传链路
 - tray popup 的锚定由 `bit_bar` 前端拥有：基于 tray button 几何和 monitor 几何维护单独的 popup shell；点击空白区、按 `Esc`、monitor 变化、前端重连或右侧重建时统一关闭
 - 时钟作为独立 trailing module 渲染，点击后显示本地轻量 popover；popover 内容完全前端本地生成，不依赖额外 IPC
 - 右侧 cluster 以稳定几何优先：clock 预留独立宽度，tray 与 clock 之间使用固定 gap，tray 数量变化不应拖动 clock
@@ -27,4 +29,4 @@
 
 ## 非目标
 
-v1 不将“通用 Linux 全局应用菜单桥接”作为核心能力；当前也未接入完整 dbusmenu 树同步。
+v1 不将“通用 Linux 全局应用菜单桥接”作为核心能力；当前只同步 tray item 自己的 dbusmenu 树。

@@ -589,6 +589,14 @@ bs_state_store_lookup_tray_item(BsStateStore *store, const char *item_id) {
   return g_hash_table_lookup(store->snapshot.tray_items, item_id);
 }
 
+const BsTrayMenuTree *
+bs_state_store_lookup_tray_menu(BsStateStore *store, const char *item_id) {
+  g_return_val_if_fail(store != NULL, NULL);
+  g_return_val_if_fail(item_id != NULL, NULL);
+
+  return g_hash_table_lookup(store->snapshot.tray_menus, item_id);
+}
+
 GPtrArray *
 bs_state_store_list_app_windows(BsStateStore *store, const char *app_key) {
   const BsDockItem *dock_item = NULL;
@@ -1041,6 +1049,51 @@ bs_state_store_clear_tray_items(BsStateStore *store) {
 
   g_hash_table_remove_all(store->snapshot.tray_items);
   bs_state_store_mark_topic_changed(store, BS_TOPIC_TRAY);
+}
+
+bool
+bs_state_store_replace_tray_menu(BsStateStore *store, const BsTrayMenuTree *tree) {
+  const BsTrayMenuTree *existing = NULL;
+
+  g_return_val_if_fail(store != NULL, false);
+  g_return_val_if_fail(tree != NULL, false);
+  g_return_val_if_fail(tree->item_id != NULL, false);
+
+  existing = g_hash_table_lookup(store->snapshot.tray_menus, tree->item_id);
+  if (existing != NULL && bs_tray_menu_tree_equals(existing, tree)) {
+    return false;
+  }
+
+  g_hash_table_replace(store->snapshot.tray_menus,
+                       g_strdup(tree->item_id),
+                       bs_tray_menu_tree_dup(tree));
+  bs_state_store_mark_topic_changed(store, BS_TOPIC_TRAY_MENU);
+  return true;
+}
+
+bool
+bs_state_store_remove_tray_menu(BsStateStore *store, const char *item_id) {
+  g_return_val_if_fail(store != NULL, false);
+  g_return_val_if_fail(item_id != NULL, false);
+
+  if (!g_hash_table_remove(store->snapshot.tray_menus, item_id)) {
+    return false;
+  }
+
+  bs_state_store_mark_topic_changed(store, BS_TOPIC_TRAY_MENU);
+  return true;
+}
+
+void
+bs_state_store_clear_tray_menus(BsStateStore *store) {
+  g_return_if_fail(store != NULL);
+
+  if (g_hash_table_size(store->snapshot.tray_menus) == 0) {
+    return;
+  }
+
+  g_hash_table_remove_all(store->snapshot.tray_menus);
+  bs_state_store_mark_topic_changed(store, BS_TOPIC_TRAY_MENU);
 }
 
 void

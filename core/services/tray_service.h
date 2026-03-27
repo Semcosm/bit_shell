@@ -4,12 +4,14 @@
 #include <gio/gio.h>
 #include <stdbool.h>
 
+#include "services/tray_menu_service.h"
 #include "state/state_store.h"
 
 typedef struct _BsTrayService BsTrayService;
 
 typedef struct {
   const char *watcher_name;
+  BsTrayMenuService *menu_service;
 } BsTrayServiceConfig;
 
 BsTrayService *bs_tray_service_new(BsStateStore *store, const BsTrayServiceConfig *config);

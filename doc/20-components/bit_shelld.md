@@ -39,7 +39,7 @@
 ## 输出
 
 - `state snapshot`：给前端的完整一致性快照
-- `topic events`：按主题分发的增量事件（`shell/windows/workspaces/dock/tray/settings`）
+- `topic events`：按主题分发的增量事件（`shell/windows/workspaces/dock/tray/tray_menu/settings`）
 - `persisted state`：更新后的 pinned、recents、favorites 与运行时状态落盘
 
 ## 当前实现状态
@@ -51,7 +51,8 @@
 - 已实现：`DockService` 的 `pinned + running` 聚合，`dock` topic 已输出真实 item 列表与顺序信息。
 - 已实现：`state.json` 中 `pinned_apps` 的读取与写回，并驱动 dock 聚合。
 - 已实现：`focus_window` / `switch_workspace` / `activate_app` / `launch_app` / `pin_app` / `unpin_app` 的最小真实路由执行。
-- 未实现：`toggle_launchpad` / tray 命令等业务动作的真实执行链路。
+- 已实现：tray item 的 `Activate/ContextMenu` 透传，以及 shell-owned tray menu tree 的同步与 `tray_menu_activate` 执行链路。
+- 未实现：`toggle_launchpad` 与通用 Linux 全局应用菜单桥接。
 
 ## 关键内部模块
 
@@ -62,5 +63,6 @@
 - `DockService`
 - `LauncherService`
 - `TrayService`
+- `TrayMenuService`
 - `SettingsService`
 - `CommandRouter`

@@ -68,6 +68,7 @@ struct _BsBarViewModel {
   GHashTable *outputs_by_name;
   GHashTable *workspaces_by_id;
   GHashTable *tray_items_by_id;
+  GHashTable *tray_menus_by_item_id;
   GPtrArray *workspace_strip_items;
   GPtrArray *window_candidates;
   GPtrArray *tray_items;
@@ -103,6 +104,7 @@ static void bs_bar_view_model_parse_shell(BsBarViewModel *vm, JsonObject *object
 static void bs_bar_view_model_parse_windows(BsBarViewModel *vm, JsonObject *object);
 static void bs_bar_view_model_parse_workspaces(BsBarViewModel *vm, JsonObject *object);
 static void bs_bar_view_model_parse_tray(BsBarViewModel *vm, JsonObject *object);
+static bool bs_bar_view_model_parse_tray_menu(BsBarViewModel *vm, JsonObject *object);
 static bool bs_bar_view_model_parse_settings(BsBarViewModel *vm, JsonObject *object);
 static void bs_bar_view_model_parse_topic_versions(BsBarViewModel *vm,
                                                    JsonObject *object,
@@ -125,6 +127,9 @@ static gint bs_bar_vm_compare_workspace_ptr(gconstpointer lhs, gconstpointer rhs
 static gint bs_bar_vm_compare_window_candidate_ptr(gconstpointer lhs, gconstpointer rhs);
 static gint bs_bar_vm_compare_tray_item_ptr(gconstpointer lhs, gconstpointer rhs);
 static void bs_bar_view_model_rebuild_all(BsBarViewModel *vm);
+static BsTrayMenuItemKind bs_bar_vm_parse_tray_menu_kind(const char *value);
+static BsTrayMenuNode *bs_bar_vm_parse_tray_menu_node(JsonObject *object);
+static void bs_bar_vm_tray_menu_tree_free(gpointer data);
 
 static void
 bs_bar_vm_shell_state_clear(BsBarVmShellState *shell) {
@@ -291,11 +296,17 @@ bs_bar_view_model_clear_caches(BsBarViewModel *vm) {
   g_hash_table_remove_all(vm->outputs_by_name);
   g_hash_table_remove_all(vm->workspaces_by_id);
   g_hash_table_remove_all(vm->tray_items_by_id);
+  g_hash_table_remove_all(vm->tray_menus_by_item_id);
   g_ptr_array_set_size(vm->workspace_strip_items, 0);
   g_ptr_array_set_size(vm->window_candidates, 0);
   g_ptr_array_set_size(vm->tray_items, 0);
   g_clear_pointer(&vm->focused_title, g_free);
   g_clear_pointer(&vm->focused_app_name, g_free);
+}
+
+static void
+bs_bar_vm_tray_menu_tree_free(gpointer data) {
+  bs_tray_menu_tree_free(data);
 }
 
 static void
@@ -605,6 +616,49 @@ bs_bar_view_model_parse_tray(BsBarViewModel *vm, JsonObject *object) {
 }
 
 static bool
+bs_bar_view_model_parse_tray_menu(BsBarViewModel *vm, JsonObject *object) {
+  JsonArray *items = NULL;
+
+  g_return_val_if_fail(vm != NULL, false);
+
+  g_hash_table_remove_all(vm->tray_menus_by_item_id);
+  if (object == NULL || !json_object_has_member(object, "items")) {
+    return false;
+  }
+
+  items = json_object_get_array_member(object, "items");
+  for (guint i = 0; i < json_array_get_length(items); i++) {
+    JsonObject *item = json_array_get_object_element(items, i);
+    BsTrayMenuTree *tree = NULL;
+    const char *item_id = NULL;
+
+    if (item == NULL) {
+      continue;
+    }
+
+    item_id = bs_bar_vm_json_string_member(item, "item_id");
+    if (item_id == NULL || *item_id == '\0') {
+      continue;
+    }
+
+    tree = g_new0(BsTrayMenuTree, 1);
+    tree->item_id = g_strdup(item_id);
+    tree->revision = (guint32) bs_bar_vm_json_int_member(item, "revision", 0);
+    tree->root = bs_bar_vm_parse_tray_menu_node(json_object_has_member(item, "root")
+                                                  ? json_object_get_object_member(item, "root")
+                                                  : NULL);
+    if (tree->root == NULL) {
+      bs_tray_menu_tree_free(tree);
+      continue;
+    }
+
+    g_hash_table_replace(vm->tray_menus_by_item_id, g_strdup(tree->item_id), tree);
+  }
+
+  return true;
+}
+
+static bool
 bs_bar_view_model_parse_settings(BsBarViewModel *vm, JsonObject *object) {
   JsonObject *bar = NULL;
   BsBarConfig next = {0};
@@ -637,6 +691,59 @@ bs_bar_view_model_parse_settings(BsBarViewModel *vm, JsonObject *object) {
 
   vm->bar_config = next;
   return true;
+}
+
+static BsTrayMenuItemKind
+bs_bar_vm_parse_tray_menu_kind(const char *value) {
+  if (g_strcmp0(value, "separator") == 0) {
+    return BS_TRAY_MENU_ITEM_SEPARATOR;
+  }
+  if (g_strcmp0(value, "check") == 0) {
+    return BS_TRAY_MENU_ITEM_CHECK;
+  }
+  if (g_strcmp0(value, "radio") == 0) {
+    return BS_TRAY_MENU_ITEM_RADIO;
+  }
+  if (g_strcmp0(value, "submenu") == 0) {
+    return BS_TRAY_MENU_ITEM_SUBMENU;
+  }
+  return BS_TRAY_MENU_ITEM_NORMAL;
+}
+
+static BsTrayMenuNode *
+bs_bar_vm_parse_tray_menu_node(JsonObject *object) {
+  JsonArray *children = NULL;
+  BsTrayMenuNode *node = NULL;
+
+  if (object == NULL) {
+    return NULL;
+  }
+
+  node = g_new0(BsTrayMenuNode, 1);
+  node->id = (gint32) bs_bar_vm_json_int_member(object, "id", 0);
+  node->kind = bs_bar_vm_parse_tray_menu_kind(bs_bar_vm_json_string_member(object, "kind"));
+  node->label = g_strdup(bs_bar_vm_json_string_member(object, "label"));
+  node->icon_name = g_strdup(bs_bar_vm_json_string_member(object, "icon_name"));
+  node->visible = bs_bar_vm_json_bool_member(object, "visible", true);
+  node->enabled = bs_bar_vm_json_bool_member(object, "enabled", true);
+  node->checked = bs_bar_vm_json_bool_member(object, "checked", false);
+  node->is_radio = bs_bar_vm_json_bool_member(object, "is_radio", false);
+  node->children = g_ptr_array_new_with_free_func((GDestroyNotify) bs_tray_menu_node_free);
+
+  if (!json_object_has_member(object, "children")) {
+    return node;
+  }
+
+  children = json_object_get_array_member(object, "children");
+  for (guint i = 0; i < json_array_get_length(children); i++) {
+    JsonObject *child = json_array_get_object_element(children, i);
+    BsTrayMenuNode *child_node = bs_bar_vm_parse_tray_menu_node(child);
+
+    if (child_node != NULL) {
+      g_ptr_array_add(node->children, child_node);
+    }
+  }
+  return node;
 }
 
 static void
@@ -1050,6 +1157,10 @@ bs_bar_view_model_new(void) {
   vm->outputs_by_name = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, bs_bar_vm_output_free);
   vm->workspaces_by_id = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, bs_bar_vm_workspace_free);
   vm->tray_items_by_id = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, bs_bar_vm_tray_item_free);
+  vm->tray_menus_by_item_id = g_hash_table_new_full(g_str_hash,
+                                                    g_str_equal,
+                                                    g_free,
+                                                    bs_bar_vm_tray_menu_tree_free);
   vm->workspace_strip_items = g_ptr_array_new_with_free_func(bs_bar_workspace_strip_item_free);
   vm->window_candidates = g_ptr_array_new_with_free_func(bs_bar_window_candidate_free);
   vm->tray_items = g_ptr_array_new_with_free_func(bs_bar_tray_item_view_free);
@@ -1072,6 +1183,7 @@ bs_bar_view_model_free(BsBarViewModel *vm) {
   g_clear_pointer(&vm->outputs_by_name, g_hash_table_unref);
   g_clear_pointer(&vm->workspaces_by_id, g_hash_table_unref);
   g_clear_pointer(&vm->tray_items_by_id, g_hash_table_unref);
+  g_clear_pointer(&vm->tray_menus_by_item_id, g_hash_table_unref);
   g_clear_pointer(&vm->workspace_strip_items, g_ptr_array_unref);
   g_clear_pointer(&vm->window_candidates, g_ptr_array_unref);
   g_clear_pointer(&vm->tray_items, g_ptr_array_unref);
@@ -1154,6 +1266,10 @@ bs_bar_view_model_consume_json_line(BsBarViewModel *vm,
                                    json_object_has_member(state, "tray")
                                      ? json_object_get_object_member(state, "tray")
                                      : NULL);
+      (void) bs_bar_view_model_parse_tray_menu(vm,
+                                               json_object_has_member(state, "tray_menu")
+                                                 ? json_object_get_object_member(state, "tray_menu")
+                                                 : NULL);
       if (bs_bar_view_model_parse_settings(vm,
                                            json_object_has_member(state, "settings")
                                              ? json_object_get_object_member(state, "settings")
@@ -1240,6 +1356,9 @@ bs_bar_view_model_consume_json_line(BsBarViewModel *vm,
     } else if (g_strcmp0(topic, "tray") == 0) {
       bs_bar_view_model_parse_tray(vm, payload);
       bs_bar_view_model_rebuild_tray_items(vm);
+      dirty_flags |= BS_BAR_VM_DIRTY_RIGHT;
+    } else if (g_strcmp0(topic, "tray_menu") == 0) {
+      (void) bs_bar_view_model_parse_tray_menu(vm, payload);
       dirty_flags |= BS_BAR_VM_DIRTY_RIGHT;
     } else if (g_strcmp0(topic, "settings") == 0) {
       if (bs_bar_view_model_parse_settings(vm, payload)) {
@@ -1355,6 +1474,14 @@ bs_bar_view_model_tray_items(BsBarViewModel *vm) {
   return vm->tray_items;
 }
 
+const BsTrayMenuTree *
+bs_bar_view_model_lookup_tray_menu(BsBarViewModel *vm, const char *item_id) {
+  g_return_val_if_fail(vm != NULL, NULL);
+  g_return_val_if_fail(item_id != NULL, NULL);
+
+  return g_hash_table_lookup(vm->tray_menus_by_item_id, item_id);
+}
+
 char *
 bs_bar_view_model_build_snapshot_request(void) {
   return g_strdup("{\"op\":\"snapshot\"}");
@@ -1362,7 +1489,7 @@ bs_bar_view_model_build_snapshot_request(void) {
 
 char *
 bs_bar_view_model_build_subscribe_request(void) {
-  return g_strdup("{\"op\":\"subscribe\",\"topics\":[\"shell\",\"windows\",\"workspaces\",\"tray\",\"settings\"]}");
+  return g_strdup("{\"op\":\"subscribe\",\"topics\":[\"shell\",\"windows\",\"workspaces\",\"tray\",\"tray_menu\",\"settings\"]}");
 }
 
 bool

@@ -20,6 +20,7 @@ bit_shelld_sources = files(
   'model/ipc.c',
   'model/config.c',
   'model/snapshot.c',
+  'model/tray_menu.c',
   'shelld/main.c',
   'shelld/app.c',
   'shelld/config_watcher.c',
@@ -31,6 +32,7 @@ bit_shelld_sources = files(
   'services/workspace_service.c',
   'services/dock_service.c',
   'services/launcher_service.c',
+  'services/tray_menu_service.c',
   'services/tray_service.c',
   'services/settings_service.c',
 )
@@ -62,6 +64,7 @@ executable(
 bit_bar_sources = files(
   'model/config.c',
   'model/ipc.c',
+  'model/tray_menu.c',
   'frontends/common/ipc_client.c',
   'frontends/bit_bar/main.c',
   'frontends/bit_bar/bar_app.c',
@@ -71,6 +74,8 @@ bit_bar_sources = files(
   'frontends/bit_bar/tray_icon_resolver.h',
   'frontends/bit_bar/tray_menu_bridge.c',
   'frontends/bit_bar/tray_menu_bridge.h',
+  'frontends/bit_bar/tray_menu_view.c',
+  'frontends/bit_bar/tray_menu_view.h',
   'frontends/bit_bar/tray_strip.c',
   'frontends/bit_bar/tray_strip.h',
   'frontends/bit_bar/tray_item_button.c',
@@ -97,3 +102,21 @@ bit_bar_tray_icon_resolver_test = executable(
 )
 
 test('bit_bar_tray_icon_resolver', bit_bar_tray_icon_resolver_test)
+
+bit_bar_tray_menu_roundtrip_test = executable(
+  'bit_bar_tray_menu_roundtrip_test',
+  [
+    'frontends/bit_bar/tray_menu_roundtrip_test.c',
+    'frontends/bit_bar/bar_view_model.c',
+    'model/config.c',
+    'model/ipc.c',
+    'model/snapshot.c',
+    'model/tray_menu.c',
+    'state/state_store.c',
+  ],
+  include_directories: core_includes,
+  dependencies: [glib_dep, gio_dep, json_glib_dep, gtk4_dep],
+  install: false,
+)
+
+test('bit_bar_tray_menu_roundtrip', bit_bar_tray_menu_roundtrip_test)

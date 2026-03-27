@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define BS_TOPIC_COUNT 6
+#define BS_TOPIC_COUNT 7
 #define BS_IPC_COORD_UNSET INT32_MIN
 
 typedef enum {
@@ -14,6 +14,7 @@ typedef enum {
   BS_TOPIC_WORKSPACES,
   BS_TOPIC_DOCK,
   BS_TOPIC_TRAY,
+  BS_TOPIC_TRAY_MENU,
   BS_TOPIC_SETTINGS,
 } BsTopic;
 
@@ -33,6 +34,7 @@ typedef enum {
   BS_COMMAND_UNPIN_APP,
   BS_COMMAND_TRAY_ACTIVATE,
   BS_COMMAND_TRAY_CONTEXT_MENU,
+  BS_COMMAND_TRAY_MENU_ACTIVATE,
 } BsCommand;
 
 typedef struct {
@@ -47,6 +49,7 @@ typedef struct {
   char *window_id;
   char *workspace_id;
   char *item_id;
+  int32_t menu_item_id;
   int32_t x;
   int32_t y;
 } BsCommandRequest;
