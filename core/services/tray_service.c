@@ -20,6 +20,7 @@ struct _BsTrayService {
   BsStateStore *store;
   char *watcher_name;
   bool running;
+  guint64 next_presentation_seq;
   GDBusConnection *session_bus;
   guint watcher_owner_id;
   guint watcher_object_id;
@@ -36,6 +37,7 @@ struct _BsTrayRegistration {
   GDBusProxy *item_proxy;
   BsTrayCapabilityState activate_capability;
   BsTrayCapabilityState context_menu_capability;
+  guint64 presentation_seq;
 };
 
 struct _BsTrayPendingRegistration {
@@ -391,6 +393,7 @@ bs_tray_service_start(BsTrayService *service, GError **error) {
   }
 
   service->running = true;
+  service->next_presentation_seq = 1;
   bs_state_store_clear_tray_items(service->store);
   bs_state_store_mark_topic_changed(service->store, BS_TOPIC_TRAY);
   return true;
@@ -487,6 +490,7 @@ bs_tray_service_refresh_registration(BsTrayRegistration *registration, GError **
   item.has_activate = bs_tray_service_capability_projects_true(registration->activate_capability);
   item.has_context_menu =
     bs_tray_service_capability_projects_true(registration->context_menu_capability);
+  item.presentation_seq = registration->presentation_seq;
 
   (void) error;
   bs_state_store_begin_update(registration->service->store);
@@ -532,6 +536,7 @@ bs_tray_service_register_item(BsTrayService *service,
   registration->object_path = g_strdup(object_path);
   registration->activate_capability = BS_TRAY_CAPABILITY_UNKNOWN;
   registration->context_menu_capability = BS_TRAY_CAPABILITY_UNKNOWN;
+  registration->presentation_seq = service->next_presentation_seq++;
   registration->item_proxy = g_dbus_proxy_new_sync(service->session_bus,
                                                    G_DBUS_PROXY_FLAGS_NONE,
                                                    NULL,
