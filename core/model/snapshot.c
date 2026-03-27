@@ -22,6 +22,7 @@ static gint bs_compare_window(gconstpointer lhs, gconstpointer rhs);
 static gint bs_compare_dock_item(gconstpointer lhs, gconstpointer rhs);
 static gint bs_compare_tray_item(gconstpointer lhs, gconstpointer rhs);
 static const char *bs_tray_item_status_to_string(BsTrayItemStatus status);
+static void bs_json_append_tray_pixmaps(GString *json, GPtrArray *pixmaps);
 
 static void
 bs_hash_table_destroy_window(gpointer value) {
@@ -263,6 +264,35 @@ bs_tray_item_status_to_string(BsTrayItemStatus status) {
 }
 
 static void
+bs_json_append_tray_pixmaps(GString *json, GPtrArray *pixmaps) {
+  g_string_append(json, "[");
+  if (pixmaps != NULL) {
+    for (guint i = 0; i < pixmaps->len; i++) {
+      const BsTrayPixmap *pixmap = g_ptr_array_index(pixmaps, i);
+      gsize data_len = 0;
+      const guint8 *data = NULL;
+      g_autofree char *bytes_b64 = NULL;
+
+      if (pixmap == NULL) {
+        continue;
+      }
+      if (i > 0) {
+        g_string_append(json, ",");
+      }
+
+      data = pixmap->argb32 != NULL ? g_bytes_get_data(pixmap->argb32, &data_len) : NULL;
+      bytes_b64 = data != NULL && data_len > 0 ? g_base64_encode(data, data_len) : g_strdup("");
+      g_string_append_printf(json,
+                             "{\"width\":%d,\"height\":%d,\"bytes_b64\":\"%s\"}",
+                             pixmap->width,
+                             pixmap->height,
+                             bytes_b64 != NULL ? bytes_b64 : "");
+    }
+  }
+  g_string_append(json, "]");
+}
+
+static void
 bs_json_append_shell_payload(GString *json, const BsSnapshot *snapshot) {
   g_string_append(json, "{");
   g_string_append_printf(json,
@@ -468,8 +498,12 @@ bs_json_append_tray_payload(GString *json, const BsSnapshot *snapshot) {
     bs_json_append_nullable_string(json, bs_tray_item_status_to_string(tray_item->status));
     g_string_append(json, ",\"icon_name\":");
     bs_json_append_nullable_string(json, tray_item->icon_name);
+    g_string_append(json, ",\"icon_pixmaps\":");
+    bs_json_append_tray_pixmaps(json, tray_item->icon_pixmaps);
     g_string_append(json, ",\"attention_icon_name\":");
     bs_json_append_nullable_string(json, tray_item->attention_icon_name);
+    g_string_append(json, ",\"attention_icon_pixmaps\":");
+    bs_json_append_tray_pixmaps(json, tray_item->attention_icon_pixmaps);
     g_string_append(json, ",\"menu_object_path\":");
     bs_json_append_nullable_string(json, tray_item->menu_object_path);
     g_string_append_printf(json,

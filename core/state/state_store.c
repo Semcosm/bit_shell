@@ -20,6 +20,11 @@ static BsWorkspace *bs_workspace_dup(const BsWorkspace *workspace);
 static BsOutput *bs_output_dup(const BsOutput *output);
 static BsAppState *bs_app_state_dup(const BsAppState *app_state);
 static BsDockItem *bs_dock_item_dup(const BsDockItem *dock_item);
+static BsTrayPixmap *bs_tray_pixmap_dup(const BsTrayPixmap *pixmap);
+static void bs_tray_pixmap_free(gpointer data);
+static GPtrArray *bs_tray_pixmap_ptr_array_dup(GPtrArray *array);
+static bool bs_tray_pixmap_equals(const BsTrayPixmap *lhs, const BsTrayPixmap *rhs);
+static bool bs_tray_pixmap_ptr_array_equals(GPtrArray *lhs, GPtrArray *rhs);
 static BsTrayItem *bs_tray_item_dup(const BsTrayItem *tray_item);
 static GPtrArray *bs_string_ptr_array_dup(GPtrArray *array);
 static bool bs_tray_item_equals(const BsTrayItem *lhs, const BsTrayItem *rhs);
@@ -121,7 +126,13 @@ bs_tray_item_clear(BsTrayItem *tray_item) {
   g_free(tray_item->id);
   g_free(tray_item->title);
   g_free(tray_item->icon_name);
+  if (tray_item->icon_pixmaps != NULL) {
+    g_ptr_array_unref(tray_item->icon_pixmaps);
+  }
   g_free(tray_item->attention_icon_name);
+  if (tray_item->attention_icon_pixmaps != NULL) {
+    g_ptr_array_unref(tray_item->attention_icon_pixmaps);
+  }
 }
 
 static BsWindow *
@@ -239,6 +250,91 @@ bs_dock_item_dup(const BsDockItem *dock_item) {
   return copy;
 }
 
+static BsTrayPixmap *
+bs_tray_pixmap_dup(const BsTrayPixmap *pixmap) {
+  BsTrayPixmap *copy = NULL;
+
+  if (pixmap == NULL) {
+    return NULL;
+  }
+
+  copy = g_new0(BsTrayPixmap, 1);
+  copy->width = pixmap->width;
+  copy->height = pixmap->height;
+  copy->argb32 = pixmap->argb32 != NULL ? g_bytes_ref(pixmap->argb32) : NULL;
+  return copy;
+}
+
+static void
+bs_tray_pixmap_free(gpointer data) {
+  BsTrayPixmap *pixmap = data;
+
+  if (pixmap == NULL) {
+    return;
+  }
+
+  g_clear_pointer(&pixmap->argb32, g_bytes_unref);
+  g_free(pixmap);
+}
+
+static GPtrArray *
+bs_tray_pixmap_ptr_array_dup(GPtrArray *array) {
+  if (array == NULL) {
+    return NULL;
+  }
+
+  GPtrArray *copy = g_ptr_array_new_with_free_func(bs_tray_pixmap_free);
+  for (guint i = 0; i < array->len; i++) {
+    const BsTrayPixmap *pixmap = g_ptr_array_index(array, i);
+    g_ptr_array_add(copy, bs_tray_pixmap_dup(pixmap));
+  }
+  return copy;
+}
+
+static bool
+bs_tray_pixmap_equals(const BsTrayPixmap *lhs, const BsTrayPixmap *rhs) {
+  gsize lhs_size = 0;
+  gsize rhs_size = 0;
+  const guint8 *lhs_data = NULL;
+  const guint8 *rhs_data = NULL;
+
+  if (lhs == NULL && rhs == NULL) {
+    return true;
+  }
+  if (lhs == NULL || rhs == NULL) {
+    return false;
+  }
+
+  lhs_data = lhs->argb32 != NULL ? g_bytes_get_data(lhs->argb32, &lhs_size) : NULL;
+  rhs_data = rhs->argb32 != NULL ? g_bytes_get_data(rhs->argb32, &rhs_size) : NULL;
+
+  return lhs->width == rhs->width
+         && lhs->height == rhs->height
+         && lhs_size == rhs_size
+         && ((lhs_size == 0 && rhs_size == 0)
+             || (lhs_data != NULL && rhs_data != NULL && memcmp(lhs_data, rhs_data, lhs_size) == 0));
+}
+
+static bool
+bs_tray_pixmap_ptr_array_equals(GPtrArray *lhs, GPtrArray *rhs) {
+  if (lhs == NULL && rhs == NULL) {
+    return true;
+  }
+  if (lhs == NULL || rhs == NULL) {
+    return false;
+  }
+  if (lhs->len != rhs->len) {
+    return false;
+  }
+
+  for (guint i = 0; i < lhs->len; i++) {
+    if (!bs_tray_pixmap_equals(g_ptr_array_index(lhs, i), g_ptr_array_index(rhs, i))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static BsTrayItem *
 bs_tray_item_dup(const BsTrayItem *tray_item) {
   BsTrayItem *copy = NULL;
@@ -255,7 +351,9 @@ bs_tray_item_dup(const BsTrayItem *tray_item) {
   copy->id = g_strdup(tray_item->id);
   copy->title = g_strdup(tray_item->title);
   copy->icon_name = g_strdup(tray_item->icon_name);
+  copy->icon_pixmaps = bs_tray_pixmap_ptr_array_dup(tray_item->icon_pixmaps);
   copy->attention_icon_name = g_strdup(tray_item->attention_icon_name);
+  copy->attention_icon_pixmaps = bs_tray_pixmap_ptr_array_dup(tray_item->attention_icon_pixmaps);
   copy->status = tray_item->status;
   copy->item_is_menu = tray_item->item_is_menu;
   copy->has_activate = tray_item->has_activate;
@@ -276,7 +374,9 @@ bs_tray_item_equals(const BsTrayItem *lhs, const BsTrayItem *rhs) {
          && g_strcmp0(lhs->id, rhs->id) == 0
          && g_strcmp0(lhs->title, rhs->title) == 0
          && g_strcmp0(lhs->icon_name, rhs->icon_name) == 0
+         && bs_tray_pixmap_ptr_array_equals(lhs->icon_pixmaps, rhs->icon_pixmaps)
          && g_strcmp0(lhs->attention_icon_name, rhs->attention_icon_name) == 0
+         && bs_tray_pixmap_ptr_array_equals(lhs->attention_icon_pixmaps, rhs->attention_icon_pixmaps)
          && lhs->status == rhs->status
          && lhs->item_is_menu == rhs->item_is_menu
          && lhs->has_activate == rhs->has_activate

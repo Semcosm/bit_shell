@@ -78,6 +78,12 @@ typedef enum {
 } BsTrayItemStatus;
 
 typedef struct {
+  gint width;
+  gint height;
+  GBytes *argb32;
+} BsTrayPixmap;
+
+typedef struct {
   char *item_id;
   char *bus_name;
   char *object_path;
@@ -85,7 +91,9 @@ typedef struct {
   char *id;
   char *title;
   char *icon_name;
+  GPtrArray *icon_pixmaps;
   char *attention_icon_name;
+  GPtrArray *attention_icon_pixmaps;
   BsTrayItemStatus status;
   bool item_is_menu;
   bool has_activate;
