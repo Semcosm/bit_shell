@@ -191,7 +191,7 @@ bs_bar_tray_item_button_on_pressed(GtkGestureClick *gesture,
         g_object_set_data(G_OBJECT(button), "bs-bar-tray-anchor-y", GINT_TO_POINTER(anchor_y));
         state->on_activate(button, state->item_id, state->user_data);
       }
-    } else if (state->primary_action == BS_BAR_TRAY_PRIMARY_MENU || state->has_context_menu) {
+    } else if (state->primary_action == BS_BAR_TRAY_PRIMARY_MENU) {
       if (state->on_menu != NULL) {
         g_object_set_data(G_OBJECT(button), "bs-bar-tray-anchor-x", GINT_TO_POINTER(anchor_x));
         g_object_set_data(G_OBJECT(button), "bs-bar-tray-anchor-y", GINT_TO_POINTER(anchor_y));
