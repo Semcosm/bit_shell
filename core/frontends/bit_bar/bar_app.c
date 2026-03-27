@@ -1,6 +1,7 @@
 #include "frontends/bit_bar/bar_app.h"
 #include "frontends/bit_bar/bar_view_model.h"
 #include "frontends/bit_bar/clock_widget.h"
+#include "frontends/bit_bar/tray_menu_bridge.h"
 #include "frontends/bit_bar/tray_strip.h"
 #include "frontends/common/ipc_client.h"
 
@@ -50,6 +51,7 @@ struct _BsBarApp {
   GtkWidget *tray_strip_box;
   GtkWidget *clock_button;
   GtkWidget *clock_popover;
+  BsBarTrayMenuBridge *tray_menu_bridge;
   BsClockWidget *clock_widget;
   BsFrontendIpcClient *ipc_client;
   BsBarViewModel *view_model;
@@ -132,6 +134,13 @@ static void bs_bar_app_request_tray_context_menu(BsBarApp *app,
                                                  const char *item_id,
                                                  int x,
                                                  int y);
+static gboolean bs_bar_app_get_tray_popup_anchor(BsBarApp *app,
+                                                 GtkWidget *widget,
+                                                 BsBarPopupAnchor *out_anchor);
+static void bs_bar_app_open_tray_menu(BsBarApp *app,
+                                      const char *item_id,
+                                      GtkWidget *button);
+static void bs_bar_app_close_tray_menu(BsBarApp *app);
 static bool bs_bar_app_get_tray_item_anchor(BsBarApp *app,
                                             GtkWidget *widget,
                                             int *out_x,
@@ -140,6 +149,11 @@ static void bs_bar_app_on_workspace_button_clicked(GtkButton *button, gpointer u
 static void bs_bar_app_on_title_button_clicked(GtkButton *button, gpointer user_data);
 static void bs_bar_app_on_clock_button_clicked(GtkButton *button, gpointer user_data);
 static void bs_bar_app_on_window_candidate_clicked(GtkButton *button, gpointer user_data);
+static gboolean bs_bar_app_on_window_key_pressed(GtkEventControllerKey *controller,
+                                                 guint keyval,
+                                                 guint keycode,
+                                                 GdkModifierType state,
+                                                 gpointer user_data);
 static void bs_bar_app_rebuild_title_popover(BsBarApp *app);
 static void bs_bar_app_rebuild_clock_popover(BsBarApp *app);
 static gboolean bs_bar_app_render_idle_cb(gpointer user_data);
@@ -211,6 +225,7 @@ bs_bar_app_free(BsBarApp *app) {
   g_clear_object(&app->tracked_monitor);
   g_clear_object(&app->monitors);
   g_clear_object(&app->debug_css_provider);
+  bs_bar_tray_menu_bridge_free(app->tray_menu_bridge);
   bs_clock_widget_free(app->clock_widget);
   bs_frontend_ipc_client_free(app->ipc_client);
   bs_bar_view_model_free(app->view_model);
@@ -778,6 +793,7 @@ bs_bar_app_on_monitors_changed(GListModel *model,
   g_return_if_fail(app != NULL);
 
   g_message("[bit_bar] display monitors changed; refreshing target monitor layout");
+  bs_bar_app_close_tray_menu(app);
   bs_bar_app_refresh_target_monitor_layout(app);
 }
 
@@ -791,6 +807,7 @@ bs_bar_app_on_target_monitor_notify(GObject *object, GParamSpec *pspec, gpointer
   g_return_if_fail(pspec != NULL);
 
   g_message("[bit_bar] target monitor property changed: %s", pspec->name);
+  bs_bar_app_close_tray_menu(app);
   bs_bar_app_refresh_target_monitor_layout(app);
 }
 
@@ -803,6 +820,7 @@ bs_bar_app_on_target_monitor_invalidate(GdkMonitor *monitor, gpointer user_data)
   g_return_if_fail(app != NULL);
 
   g_message("[bit_bar] target monitor invalidated; refreshing target monitor layout");
+  bs_bar_app_close_tray_menu(app);
   bs_bar_app_refresh_target_monitor_layout(app);
 }
 
@@ -1149,6 +1167,7 @@ bs_bar_app_ensure_window(BsBarApp *app) {
   app->tray_strip_box = bs_bar_tray_strip_new();
   app->clock_button = gtk_button_new();
   app->clock_popover = gtk_popover_new();
+  app->tray_menu_bridge = bs_bar_tray_menu_bridge_new(app->content_box);
   app->clock_widget = bs_clock_widget_new();
 
   gtk_widget_add_css_class(app->left_box, "bit-bar-left");
@@ -1215,6 +1234,15 @@ bs_bar_app_ensure_window(BsBarApp *app) {
                    "clicked",
                    G_CALLBACK(bs_bar_app_on_clock_button_clicked),
                    app);
+  {
+    GtkEventController *key_controller = gtk_event_controller_key_new();
+
+    g_signal_connect(key_controller,
+                     "key-pressed",
+                     G_CALLBACK(bs_bar_app_on_window_key_pressed),
+                     app);
+    gtk_widget_add_controller(GTK_WIDGET(app->window), key_controller);
+  }
 
   gtk_box_append(GTK_BOX(app->left_box), app->workspace_strip_box);
   gtk_box_append(GTK_BOX(app->center_box), app->title_button);
@@ -1261,6 +1289,9 @@ bs_bar_app_apply_layout_from_vm(BsBarApp *app) {
   }
   if (app->tray_cluster != NULL) {
     gtk_widget_set_visible(app->tray_cluster, config->show_tray);
+  }
+  if (!config->show_tray) {
+    bs_bar_app_close_tray_menu(app);
   }
   if (app->clock_widget != NULL) {
     bs_clock_widget_set_visible_enabled(app->clock_widget, config->show_clock);
@@ -1358,6 +1389,7 @@ bs_bar_app_render_right_from_vm(BsBarApp *app) {
     return;
   }
 
+  bs_bar_app_close_tray_menu(app);
   items = bs_bar_view_model_tray_items(app->view_model);
   state = bs_bar_view_model_tray_state(app->view_model);
   bs_bar_tray_strip_rebuild(app->tray_strip_box, NULL, app->metrics.tray_slot_size, NULL, NULL, NULL);
@@ -1611,6 +1643,89 @@ bs_bar_app_request_tray_context_menu(BsBarApp *app, const char *item_id, int x, 
   }
 }
 
+static gboolean
+bs_bar_app_get_tray_popup_anchor(BsBarApp *app, GtkWidget *widget, BsBarPopupAnchor *out_anchor) {
+  g_autoptr(GdkMonitor) monitor = NULL;
+  graphene_point_t src = GRAPHENE_POINT_INIT_ZERO;
+  graphene_point_t dest = GRAPHENE_POINT_INIT_ZERO;
+  GdkRectangle geometry = {0};
+
+  g_return_val_if_fail(app != NULL, false);
+  g_return_val_if_fail(widget != NULL, false);
+  g_return_val_if_fail(out_anchor != NULL, false);
+
+  *out_anchor = (BsBarPopupAnchor) {0};
+  if (app->content_box == NULL) {
+    return false;
+  }
+
+  if (!gtk_widget_compute_point(widget, app->content_box, &src, &dest)) {
+    return false;
+  }
+
+  out_anchor->x = (int) dest.x;
+  out_anchor->y = (int) dest.y;
+  out_anchor->width = gtk_widget_get_width(widget);
+  out_anchor->height = gtk_widget_get_height(widget);
+  monitor = bs_bar_app_select_target_monitor(app);
+  if (monitor != NULL) {
+    gdk_monitor_get_geometry(monitor, &geometry);
+    out_anchor->monitor_x = geometry.x;
+    out_anchor->monitor_y = geometry.y;
+    out_anchor->monitor_width = geometry.width;
+    out_anchor->monitor_height = geometry.height;
+  }
+  return true;
+}
+
+static void
+bs_bar_app_open_tray_menu(BsBarApp *app, const char *item_id, GtkWidget *button) {
+  BsBarPopupAnchor popup_anchor = {0};
+  int anchor_x = 0;
+  int anchor_y = 0;
+
+  g_return_if_fail(app != NULL);
+  g_return_if_fail(button != NULL);
+
+  if (item_id == NULL || *item_id == '\0' || app->tray_menu_bridge == NULL) {
+    return;
+  }
+
+  if (!bs_bar_app_get_tray_popup_anchor(app, button, &popup_anchor)) {
+    popup_anchor.width = MAX(gtk_widget_get_width(button), 1);
+    popup_anchor.height = MAX(gtk_widget_get_height(button), 1);
+  }
+
+  if (app->title_popover != NULL) {
+    gtk_popover_popdown(GTK_POPOVER(app->title_popover));
+  }
+  if (app->clock_popover != NULL) {
+    gtk_popover_popdown(GTK_POPOVER(app->clock_popover));
+  }
+
+  if (!bs_bar_tray_menu_bridge_toggle(app->tray_menu_bridge, item_id, &popup_anchor)) {
+    return;
+  }
+
+  if (!bs_bar_app_get_tray_item_anchor(app, button, &anchor_x, &anchor_y)) {
+    anchor_x = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "bs-bar-tray-anchor-x"));
+    anchor_y = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "bs-bar-tray-anchor-y"));
+  }
+
+  bs_bar_app_request_tray_context_menu(app, item_id, anchor_x, anchor_y);
+}
+
+static void
+bs_bar_app_close_tray_menu(BsBarApp *app) {
+  g_return_if_fail(app != NULL);
+
+  if (app->tray_menu_bridge == NULL) {
+    return;
+  }
+
+  bs_bar_tray_menu_bridge_close(app->tray_menu_bridge);
+}
+
 static bool
 bs_bar_app_get_tray_item_anchor(BsBarApp *app, GtkWidget *widget, int *out_x, int *out_y) {
   GtkNative *native = NULL;
@@ -1656,6 +1771,7 @@ bs_bar_app_tray_item_activate_bridge(GtkWidget *button,
     anchor_y = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "bs-bar-tray-anchor-y"));
   }
 
+  bs_bar_app_close_tray_menu(app);
   bs_bar_app_request_tray_activate(app, item_id, anchor_x, anchor_y);
 }
 
@@ -1664,18 +1780,11 @@ bs_bar_app_tray_item_menu_bridge(GtkWidget *button,
                                  const char *item_id,
                                  gpointer user_data) {
   BsBarApp *app = user_data;
-  int anchor_x = 0;
-  int anchor_y = 0;
 
   g_return_if_fail(app != NULL);
   g_return_if_fail(button != NULL);
 
-  if (!bs_bar_app_get_tray_item_anchor(app, button, &anchor_x, &anchor_y)) {
-    anchor_x = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "bs-bar-tray-anchor-x"));
-    anchor_y = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "bs-bar-tray-anchor-y"));
-  }
-
-  bs_bar_app_request_tray_context_menu(app, item_id, anchor_x, anchor_y);
+  bs_bar_app_open_tray_menu(app, item_id, button);
 }
 
 static void
@@ -1740,6 +1849,28 @@ bs_bar_app_on_window_candidate_clicked(GtkButton *button, gpointer user_data) {
   if (app->title_popover != NULL) {
     gtk_popover_popdown(GTK_POPOVER(app->title_popover));
   }
+}
+
+static gboolean
+bs_bar_app_on_window_key_pressed(GtkEventControllerKey *controller,
+                                 guint keyval,
+                                 guint keycode,
+                                 GdkModifierType state,
+                                 gpointer user_data) {
+  BsBarApp *app = user_data;
+
+  (void) controller;
+  (void) keycode;
+  (void) state;
+
+  g_return_val_if_fail(app != NULL, FALSE);
+
+  if (keyval != GDK_KEY_Escape) {
+    return FALSE;
+  }
+
+  bs_bar_app_close_tray_menu(app);
+  return FALSE;
 }
 
 static void
@@ -1856,6 +1987,7 @@ bs_bar_app_on_ipc_connected(BsFrontendIpcClient *client, gpointer user_data) {
 
   app->snapshot_in_flight = true;
   app->subscribe_sent = false;
+  bs_bar_app_close_tray_menu(app);
   bs_bar_view_model_reset_connection(app->view_model);
   snapshot_request = bs_bar_view_model_build_snapshot_request();
   if (!bs_frontend_ipc_client_send_line(client, snapshot_request, &error)) {
@@ -1874,6 +2006,7 @@ bs_bar_app_on_ipc_disconnected(BsFrontendIpcClient *client, gpointer user_data) 
 
   app->snapshot_in_flight = false;
   app->subscribe_sent = false;
+  bs_bar_app_close_tray_menu(app);
 }
 
 static void

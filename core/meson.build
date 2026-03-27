@@ -69,6 +69,8 @@ bit_bar_sources = files(
   'frontends/bit_bar/clock_widget.c',
   'frontends/bit_bar/tray_icon_resolver.c',
   'frontends/bit_bar/tray_icon_resolver.h',
+  'frontends/bit_bar/tray_menu_bridge.c',
+  'frontends/bit_bar/tray_menu_bridge.h',
   'frontends/bit_bar/tray_strip.c',
   'frontends/bit_bar/tray_strip.h',
   'frontends/bit_bar/tray_item_button.c',
