@@ -82,6 +82,8 @@ static void bs_tray_service_unregister_item(BsTrayService *service,
 static void bs_tray_service_unregister_all_items(BsTrayService *service);
 static bool bs_tray_service_refresh_registration(BsTrayRegistration *registration, GError **error);
 static char *bs_tray_service_build_item_id(const char *bus_name, const char *object_path);
+static void bs_tray_service_pixmap_free(gpointer data);
+static GPtrArray *bs_tray_service_dup_proxy_pixmaps(GDBusProxy *proxy, const char *property_name);
 static char *bs_tray_service_dup_proxy_string(GDBusProxy *proxy, const char *property_name);
 static bool bs_tray_service_capability_projects_true(BsTrayCapabilityState capability);
 static bool bs_tray_service_set_capability(BsTrayCapabilityState *slot,
@@ -202,6 +204,71 @@ bs_tray_service_build_item_id(const char *bus_name, const char *object_path) {
   g_return_val_if_fail(object_path != NULL, NULL);
 
   return g_strdup_printf("%s%s", bus_name, object_path);
+}
+
+static void
+bs_tray_service_pixmap_free(gpointer data) {
+  BsTrayPixmap *pixmap = data;
+
+  if (pixmap == NULL) {
+    return;
+  }
+
+  g_clear_pointer(&pixmap->argb32, g_bytes_unref);
+  g_free(pixmap);
+}
+
+static GPtrArray *
+bs_tray_service_dup_proxy_pixmaps(GDBusProxy *proxy, const char *property_name) {
+  g_autoptr(GVariant) value = NULL;
+  GPtrArray *pixmaps = NULL;
+  GVariantIter iter;
+  GVariant *child = NULL;
+
+  g_return_val_if_fail(proxy != NULL, NULL);
+  g_return_val_if_fail(property_name != NULL, NULL);
+
+  value = g_dbus_proxy_get_cached_property(proxy, property_name);
+  if (value == NULL || !g_variant_is_of_type(value, G_VARIANT_TYPE_ARRAY)) {
+    return NULL;
+  }
+
+  pixmaps = g_ptr_array_new_with_free_func(bs_tray_service_pixmap_free);
+  g_variant_iter_init(&iter, value);
+  while ((child = g_variant_iter_next_value(&iter)) != NULL) {
+    g_autoptr(GVariant) bytes_variant = NULL;
+    gconstpointer bytes_data = NULL;
+    gsize bytes_len = 0;
+    gint width = 0;
+    gint height = 0;
+
+    if (!g_variant_is_of_type(child, G_VARIANT_TYPE_TUPLE)) {
+      g_variant_unref(child);
+      continue;
+    }
+
+    g_variant_get(child, "(ii@ay)", &width, &height, &bytes_variant);
+    bytes_data = g_variant_get_fixed_array(bytes_variant, &bytes_len, sizeof(guint8));
+    if (width > 0
+        && height > 0
+        && bytes_data != NULL
+        && bytes_len == ((gsize) width * (gsize) height * 4U)) {
+      BsTrayPixmap *pixmap = g_new0(BsTrayPixmap, 1);
+
+      pixmap->width = width;
+      pixmap->height = height;
+      pixmap->argb32 = g_bytes_new(bytes_data, bytes_len);
+      g_ptr_array_add(pixmaps, pixmap);
+    }
+
+    g_variant_unref(child);
+  }
+
+  if (pixmaps->len == 0) {
+    g_ptr_array_unref(pixmaps);
+    return NULL;
+  }
+  return pixmaps;
 }
 
 static char *
@@ -481,8 +548,11 @@ bs_tray_service_refresh_registration(BsTrayRegistration *registration, GError **
   item.id = bs_tray_service_dup_proxy_string(registration->item_proxy, "Id");
   item.title = bs_tray_service_dup_proxy_string(registration->item_proxy, "Title");
   item.icon_name = bs_tray_service_dup_proxy_string(registration->item_proxy, "IconName");
+  item.icon_pixmaps = bs_tray_service_dup_proxy_pixmaps(registration->item_proxy, "IconPixmap");
   item.attention_icon_name = bs_tray_service_dup_proxy_string(registration->item_proxy,
                                                               "AttentionIconName");
+  item.attention_icon_pixmaps =
+    bs_tray_service_dup_proxy_pixmaps(registration->item_proxy, "AttentionIconPixmap");
   item.status = bs_tray_service_get_proxy_status(registration->item_proxy);
   item.item_is_menu = bs_tray_service_get_proxy_bool(registration->item_proxy,
                                                      "ItemIsMenu",
