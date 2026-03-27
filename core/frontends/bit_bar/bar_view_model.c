@@ -46,7 +46,9 @@ typedef struct {
   char *item_id;
   char *title;
   char *icon_name;
+  GPtrArray *icon_pixmaps;
   char *attention_icon_name;
+  GPtrArray *attention_icon_pixmaps;
   char *status;
   char *menu_object_path;
   guint64 presentation_seq;
@@ -85,6 +87,7 @@ static void bs_bar_vm_window_free(gpointer data);
 static void bs_bar_vm_output_free(gpointer data);
 static void bs_bar_vm_workspace_free(gpointer data);
 static void bs_bar_vm_tray_item_free(gpointer data);
+static void bs_bar_vm_tray_pixmap_free(gpointer data);
 static void bs_bar_workspace_strip_item_free(gpointer data);
 static void bs_bar_window_candidate_free(gpointer data);
 static void bs_bar_tray_item_view_free(gpointer data);
@@ -95,6 +98,7 @@ static const char *bs_bar_vm_json_string_member(JsonObject *object, const char *
 static bool bs_bar_vm_json_bool_member(JsonObject *object, const char *member_name, bool fallback);
 static int bs_bar_vm_json_int_member(JsonObject *object, const char *member_name, int fallback);
 static guint64 bs_bar_vm_json_uint64_member(JsonObject *object, const char *member_name, guint64 fallback);
+static GPtrArray *bs_bar_vm_json_tray_pixmaps_member(JsonObject *object, const char *member_name);
 static void bs_bar_view_model_parse_shell(BsBarViewModel *vm, JsonObject *object);
 static void bs_bar_view_model_parse_windows(BsBarViewModel *vm, JsonObject *object);
 static void bs_bar_view_model_parse_workspaces(BsBarViewModel *vm, JsonObject *object);
@@ -194,10 +198,24 @@ bs_bar_vm_tray_item_free(gpointer data) {
   g_free(item->item_id);
   g_free(item->title);
   g_free(item->icon_name);
+  g_clear_pointer(&item->icon_pixmaps, g_ptr_array_unref);
   g_free(item->attention_icon_name);
+  g_clear_pointer(&item->attention_icon_pixmaps, g_ptr_array_unref);
   g_free(item->status);
   g_free(item->menu_object_path);
   g_free(item);
+}
+
+static void
+bs_bar_vm_tray_pixmap_free(gpointer data) {
+  BsTrayPixmap *pixmap = data;
+
+  if (pixmap == NULL) {
+    return;
+  }
+
+  g_clear_pointer(&pixmap->argb32, g_bytes_unref);
+  g_free(pixmap);
 }
 
 static void
@@ -242,7 +260,9 @@ bs_bar_tray_item_view_free(gpointer data) {
   g_free(item->item_id);
   g_free(item->title);
   g_free(item->icon_name);
+  g_clear_pointer(&item->icon_pixmaps, g_ptr_array_unref);
   g_free(item->attention_icon_name);
+  g_clear_pointer(&item->attention_icon_pixmaps, g_ptr_array_unref);
   g_free(item->status);
   g_free(item->menu_object_path);
   g_free(item->effective_icon_name);
@@ -352,6 +372,62 @@ bs_bar_vm_json_uint64_member(JsonObject *object, const char *member_name, guint6
 
   g_value_unset(&value);
   return fallback;
+}
+
+static GPtrArray *
+bs_bar_vm_json_tray_pixmaps_member(JsonObject *object, const char *member_name) {
+  GPtrArray *pixmaps = NULL;
+  JsonArray *array = NULL;
+
+  if (object == NULL || member_name == NULL || !json_object_has_member(object, member_name)) {
+    return NULL;
+  }
+
+  array = json_object_get_array_member(object, member_name);
+  if (array == NULL) {
+    return NULL;
+  }
+
+  pixmaps = g_ptr_array_new_with_free_func(bs_bar_vm_tray_pixmap_free);
+  for (guint i = 0; i < json_array_get_length(array); i++) {
+    JsonObject *entry = json_array_get_object_element(array, i);
+    const char *bytes_b64 = NULL;
+    gsize bytes_len = 0;
+    g_autofree guint8 *decoded = NULL;
+    gint width = 0;
+    gint height = 0;
+
+    if (entry == NULL) {
+      continue;
+    }
+
+    width = bs_bar_vm_json_int_member(entry, "width", 0);
+    height = bs_bar_vm_json_int_member(entry, "height", 0);
+    bytes_b64 = bs_bar_vm_json_string_member(entry, "bytes_b64");
+    if (width <= 0 || height <= 0 || bytes_b64 == NULL || *bytes_b64 == '\0') {
+      continue;
+    }
+
+    decoded = g_base64_decode(bytes_b64, &bytes_len);
+    if (decoded == NULL || bytes_len != ((gsize) width * (gsize) height * 4U)) {
+      continue;
+    }
+
+    {
+      BsTrayPixmap *pixmap = g_new0(BsTrayPixmap, 1);
+
+      pixmap->width = width;
+      pixmap->height = height;
+      pixmap->argb32 = g_bytes_new_take(g_steal_pointer(&decoded), bytes_len);
+      g_ptr_array_add(pixmaps, pixmap);
+    }
+  }
+
+  if (pixmaps->len == 0) {
+    g_ptr_array_unref(pixmaps);
+    return NULL;
+  }
+  return pixmaps;
 }
 
 static void
@@ -513,8 +589,11 @@ bs_bar_view_model_parse_tray(BsBarViewModel *vm, JsonObject *object) {
     tray_item->item_id = g_strdup(item_id);
     tray_item->title = g_strdup(bs_bar_vm_json_string_member(item, "title"));
     tray_item->icon_name = g_strdup(bs_bar_vm_json_string_member(item, "icon_name"));
+    tray_item->icon_pixmaps = bs_bar_vm_json_tray_pixmaps_member(item, "icon_pixmaps");
     tray_item->attention_icon_name = g_strdup(bs_bar_vm_json_string_member(item,
                                                                            "attention_icon_name"));
+    tray_item->attention_icon_pixmaps = bs_bar_vm_json_tray_pixmaps_member(item,
+                                                                           "attention_icon_pixmaps");
     tray_item->status = g_strdup(bs_bar_vm_json_string_member(item, "status"));
     tray_item->menu_object_path = g_strdup(bs_bar_vm_json_string_member(item, "menu_object_path"));
     tray_item->presentation_seq = bs_bar_vm_json_uint64_member(item, "presentation_seq", 0);
@@ -922,7 +1001,13 @@ bs_bar_view_model_rebuild_tray_items(BsBarViewModel *vm) {
     view->item_id = g_strdup(item->item_id);
     view->title = g_strdup(item->title);
     view->icon_name = g_strdup(item->icon_name);
+    view->icon_pixmaps = item->icon_pixmaps != NULL
+                           ? g_ptr_array_ref(item->icon_pixmaps)
+                           : NULL;
     view->attention_icon_name = g_strdup(item->attention_icon_name);
+    view->attention_icon_pixmaps = item->attention_icon_pixmaps != NULL
+                                     ? g_ptr_array_ref(item->attention_icon_pixmaps)
+                                     : NULL;
     view->status = g_strdup(item->status);
     view->menu_object_path = g_strdup(item->menu_object_path);
     view->presentation_seq = item->presentation_seq;

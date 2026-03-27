@@ -17,7 +17,7 @@
 - 前端显式消费 `shell` readiness；连接中与首帧未齐阶段使用稳定占位，而不是把过渡态误显示为空状态
 - 标题区可弹出窗口列表
 - 托盘 item 左键激活、右键菜单
-- tray 优先按图标渲染，文本只作回退；无 tray item 时右侧不显示错误文案
+- tray 优先按图标渲染：theme icon 优先，其次使用应用提供的 pixmap，文本只作最终回退；无 tray item 时右侧不显示错误文案
 - tray 顺序以 shell 提供的稳定展示序为准：属性刷新不重排，新项追加到尾部，重注册项视为新项
 - 时钟作为独立 trailing module 渲染，点击后显示本地轻量 popover；popover 内容完全前端本地生成，不依赖额外 IPC
 - 右侧 cluster 以稳定几何优先：clock 预留独立宽度，tray 与 clock 之间使用固定 gap，tray 数量变化不应拖动 clock

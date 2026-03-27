@@ -67,6 +67,8 @@ bit_bar_sources = files(
   'frontends/bit_bar/bar_app.c',
   'frontends/bit_bar/bar_view_model.c',
   'frontends/bit_bar/clock_widget.c',
+  'frontends/bit_bar/tray_icon_resolver.c',
+  'frontends/bit_bar/tray_icon_resolver.h',
   'frontends/bit_bar/tray_strip.c',
   'frontends/bit_bar/tray_strip.h',
   'frontends/bit_bar/tray_item_button.c',
@@ -80,3 +82,16 @@ executable(
   dependencies: [glib_dep, gio_dep, gio_unix_dep, json_glib_dep, gtk4_dep, gtk4_layer_shell_dep],
   install: false,
 )
+
+bit_bar_tray_icon_resolver_test = executable(
+  'bit_bar_tray_icon_resolver_test',
+  [
+    'frontends/bit_bar/tray_icon_resolver_test.c',
+    'frontends/bit_bar/tray_icon_resolver.c',
+  ],
+  include_directories: core_includes,
+  dependencies: [glib_dep, gtk4_dep],
+  install: false,
+)
+
+test('bit_bar_tray_icon_resolver', bit_bar_tray_icon_resolver_test)

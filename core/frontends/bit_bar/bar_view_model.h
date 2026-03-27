@@ -5,6 +5,7 @@
 #include <stdbool.h>
 
 #include "model/config.h"
+#include "model/types.h"
 
 typedef struct _BsBarViewModel BsBarViewModel;
 
@@ -87,7 +88,9 @@ typedef struct {
   char *item_id;
   char *title;
   char *icon_name;
+  GPtrArray *icon_pixmaps;
   char *attention_icon_name;
+  GPtrArray *attention_icon_pixmaps;
   char *status;
   char *menu_object_path;
   guint64 presentation_seq;

@@ -1,4 +1,5 @@
 #include "frontends/bit_bar/tray_item_button.h"
+#include "frontends/bit_bar/tray_icon_resolver.h"
 
 typedef struct {
   char *item_id;
@@ -28,10 +29,9 @@ static GtkWidget *
 bs_bar_tray_item_button_build_content(const BsBarTrayItemView *item, int slot_size) {
   GtkWidget *box = NULL;
   GtkWidget *image = NULL;
+  GtkWidget *picture = NULL;
   GtkWidget *label = NULL;
-  GdkDisplay *display = NULL;
-  GtkIconTheme *icon_theme = NULL;
-  gboolean use_icon = FALSE;
+  BsBarTrayResolvedIcon resolved = {0};
 
   g_return_val_if_fail(item != NULL, NULL);
 
@@ -40,25 +40,33 @@ bs_bar_tray_item_button_build_content(const BsBarTrayItemView *item, int slot_si
   gtk_widget_set_valign(box, GTK_ALIGN_CENTER);
   gtk_widget_set_size_request(box, slot_size, slot_size);
 
-  display = gdk_display_get_default();
-  if (display != NULL && item->effective_icon_name != NULL && *item->effective_icon_name != '\0') {
-    icon_theme = gtk_icon_theme_get_for_display(display);
-    use_icon = icon_theme != NULL && gtk_icon_theme_has_icon(icon_theme, item->effective_icon_name);
-  }
-
-  if (use_icon) {
-    image = gtk_image_new_from_icon_name(item->effective_icon_name);
+  bs_bar_tray_icon_resolve(item, slot_size, &resolved);
+  if (resolved.kind == BS_BAR_TRAY_ICON_THEME && resolved.icon_name != NULL) {
+    image = gtk_image_new_from_icon_name(resolved.icon_name);
     gtk_widget_add_css_class(image, "bit-bar-tray-icon");
     gtk_image_set_icon_size(GTK_IMAGE(image), GTK_ICON_SIZE_NORMAL);
     gtk_box_append(GTK_BOX(box), image);
+    bs_bar_tray_resolved_icon_clear(&resolved);
     return box;
   }
 
-  label = gtk_label_new(item->fallback_label != NULL ? item->fallback_label : "?");
+  if (resolved.kind == BS_BAR_TRAY_ICON_TEXTURE && resolved.texture != NULL) {
+    picture = gtk_picture_new_for_paintable(GDK_PAINTABLE(resolved.texture));
+    gtk_widget_add_css_class(picture, "bit-bar-tray-icon");
+    gtk_widget_set_size_request(picture, slot_size, slot_size);
+    gtk_picture_set_can_shrink(GTK_PICTURE(picture), true);
+    gtk_picture_set_content_fit(GTK_PICTURE(picture), GTK_CONTENT_FIT_CONTAIN);
+    gtk_box_append(GTK_BOX(box), picture);
+    bs_bar_tray_resolved_icon_clear(&resolved);
+    return box;
+  }
+
+  label = gtk_label_new(resolved.fallback_label != NULL ? resolved.fallback_label : "?");
   gtk_widget_add_css_class(label, "bit-bar-tray-fallback");
   gtk_label_set_single_line_mode(GTK_LABEL(label), true);
   gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
   gtk_box_append(GTK_BOX(box), label);
+  bs_bar_tray_resolved_icon_clear(&resolved);
   return box;
 }
 
