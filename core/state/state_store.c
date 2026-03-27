@@ -260,6 +260,7 @@ bs_tray_item_dup(const BsTrayItem *tray_item) {
   copy->item_is_menu = tray_item->item_is_menu;
   copy->has_activate = tray_item->has_activate;
   copy->has_context_menu = tray_item->has_context_menu;
+  copy->presentation_seq = tray_item->presentation_seq;
   return copy;
 }
 
@@ -279,7 +280,8 @@ bs_tray_item_equals(const BsTrayItem *lhs, const BsTrayItem *rhs) {
          && lhs->status == rhs->status
          && lhs->item_is_menu == rhs->item_is_menu
          && lhs->has_activate == rhs->has_activate
-         && lhs->has_context_menu == rhs->has_context_menu;
+         && lhs->has_context_menu == rhs->has_context_menu
+         && lhs->presentation_seq == rhs->presentation_seq;
 }
 
 static void

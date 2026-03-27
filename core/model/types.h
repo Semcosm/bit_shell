@@ -90,6 +90,7 @@ typedef struct {
   bool item_is_menu;
   bool has_activate;
   bool has_context_menu;
+  guint64 presentation_seq;
 } BsTrayItem;
 
 void bs_shell_state_clear(BsShellState *shell_state);

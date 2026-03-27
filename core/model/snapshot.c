@@ -242,6 +242,10 @@ static gint
 bs_compare_tray_item(gconstpointer lhs, gconstpointer rhs) {
   const BsTrayItem *a = *(BsTrayItem * const *) lhs;
   const BsTrayItem *b = *(BsTrayItem * const *) rhs;
+
+  if (a->presentation_seq != b->presentation_seq) {
+    return a->presentation_seq < b->presentation_seq ? -1 : 1;
+  }
   return g_strcmp0(a->item_id, b->item_id);
 }
 
@@ -469,10 +473,11 @@ bs_json_append_tray_payload(GString *json, const BsSnapshot *snapshot) {
     g_string_append(json, ",\"menu_object_path\":");
     bs_json_append_nullable_string(json, tray_item->menu_object_path);
     g_string_append_printf(json,
-                           ",\"item_is_menu\":%s,\"has_activate\":%s,\"has_context_menu\":%s",
+                           ",\"item_is_menu\":%s,\"has_activate\":%s,\"has_context_menu\":%s,\"presentation_seq\":%" G_GUINT64_FORMAT,
                            tray_item->item_is_menu ? "true" : "false",
                            tray_item->has_activate ? "true" : "false",
-                           tray_item->has_context_menu ? "true" : "false");
+                           tray_item->has_context_menu ? "true" : "false",
+                           tray_item->presentation_seq);
     g_string_append(json, "}");
   }
   g_string_append(json, "]}");
