@@ -11,6 +11,9 @@ struct _BsBarTrayMenuBridge {
 
 static void bs_bar_tray_menu_bridge_apply_anchor(BsBarTrayMenuBridge *bridge,
                                                  const BsBarPopupAnchor *anchor);
+static void bs_bar_tray_menu_bridge_measure_content(BsBarTrayMenuBridge *bridge,
+                                                    int *out_width,
+                                                    int *out_height);
 static void bs_bar_tray_menu_bridge_clear_open_state(BsBarTrayMenuBridge *bridge);
 static void bs_bar_tray_menu_bridge_set_content(BsBarTrayMenuBridge *bridge, GtkWidget *content);
 static void bs_bar_tray_menu_bridge_on_closed(GtkPopover *popover, gpointer user_data);
@@ -22,17 +25,71 @@ static gboolean bs_bar_tray_menu_bridge_on_key_pressed(GtkEventControllerKey *co
 
 static void
 bs_bar_tray_menu_bridge_apply_anchor(BsBarTrayMenuBridge *bridge, const BsBarPopupAnchor *anchor) {
+  BsBarPopupPlacement placement = {0};
   GdkRectangle rect = {0};
+  int menu_width = 0;
+  int menu_height = 0;
 
   g_return_if_fail(bridge != NULL);
   g_return_if_fail(anchor != NULL);
 
+  bs_bar_tray_menu_bridge_measure_content(bridge, &menu_width, &menu_height);
+  placement = bs_bar_popup_compute_placement(anchor, menu_width, menu_height);
   bridge->anchor = *anchor;
   rect.x = anchor->x;
   rect.y = anchor->y;
   rect.width = MAX(anchor->width, 1);
   rect.height = MAX(anchor->height, 1);
+  gtk_popover_set_position(GTK_POPOVER(bridge->popover),
+                           placement.side == BS_BAR_POPUP_SIDE_TOP ? GTK_POS_TOP
+                                                                   : GTK_POS_BOTTOM);
   gtk_popover_set_pointing_to(GTK_POPOVER(bridge->popover), &rect);
+  gtk_widget_set_halign(bridge->popover, GTK_ALIGN_START);
+  gtk_widget_set_valign(bridge->popover, GTK_ALIGN_START);
+  gtk_widget_set_margin_start(bridge->popover, placement.x);
+  gtk_widget_set_margin_top(bridge->popover, placement.y);
+  gtk_widget_set_size_request(bridge->popover,
+                              MAX(placement.width, 1),
+                              MAX(placement.height, 1));
+}
+
+static void
+bs_bar_tray_menu_bridge_measure_content(BsBarTrayMenuBridge *bridge, int *out_width, int *out_height) {
+  GtkWidget *widget = NULL;
+  int min_width = 0;
+  int nat_width = 0;
+  int min_height = 0;
+  int nat_height = 0;
+  int width = 0;
+
+  g_return_if_fail(bridge != NULL);
+  g_return_if_fail(out_width != NULL);
+  g_return_if_fail(out_height != NULL);
+
+  *out_width = 1;
+  *out_height = 1;
+  widget = bridge->content != NULL ? bridge->content : bridge->shell_box;
+  if (widget == NULL) {
+    return;
+  }
+
+  gtk_widget_measure(widget,
+                     GTK_ORIENTATION_HORIZONTAL,
+                     -1,
+                     &min_width,
+                     &nat_width,
+                     NULL,
+                     NULL);
+  width = MAX(MAX(min_width, nat_width), 1);
+  gtk_widget_measure(widget,
+                     GTK_ORIENTATION_VERTICAL,
+                     width,
+                     &min_height,
+                     &nat_height,
+                     NULL,
+                     NULL);
+  *out_width = width;
+  *out_height = MAX(MAX(min_height, nat_height), 1);
 }
 
 static void
@@ -112,6 +169,8 @@ bs_bar_tray_menu_bridge_new(GtkWidget *overlay_parent) {
   gtk_widget_set_size_request(bridge->shell_box, 1, 1);
   gtk_widget_set_opacity(bridge->shell_box, 0.0);
   gtk_widget_set_focusable(bridge->popover, TRUE);
+  gtk_widget_set_halign(bridge->popover, GTK_ALIGN_START);
+  gtk_widget_set_valign(bridge->popover, GTK_ALIGN_START);
   gtk_popover_set_autohide(GTK_POPOVER(bridge->popover), true);
   gtk_popover_set_cascade_popdown(GTK_POPOVER(bridge->popover), true);
   gtk_popover_set_has_arrow(GTK_POPOVER(bridge->popover), false);
@@ -174,7 +233,7 @@ bs_bar_tray_menu_bridge_open(BsBarTrayMenuBridge *bridge,
   g_free(bridge->open_item_id);
   bridge->open_item_id = g_strdup(item_id);
   gtk_popover_popup(GTK_POPOVER(bridge->popover));
-  gtk_widget_grab_focus(bridge->popover);
+  gtk_widget_grab_focus(bridge->content != NULL ? bridge->content : bridge->popover);
   return true;
 }
 
@@ -245,4 +304,54 @@ bs_bar_tray_menu_bridge_handle_shell_reset(BsBarTrayMenuBridge *bridge) {
   g_return_if_fail(bridge != NULL);
 
   bs_bar_tray_menu_bridge_close(bridge);
+}
+
+BsBarPopupPlacement
+bs_bar_popup_compute_placement(const BsBarPopupAnchor *anchor, int menu_width, int menu_height) {
+  BsBarPopupPlacement placement = {0};
+  const int monitor_x = 0;
+  const int monitor_y = 0;
+  int monitor_width = 0;
+  int monitor_height = 0;
+  int anchor_x = 0;
+  int anchor_y = 0;
+  int anchor_width = 0;
+  int anchor_height = 0;
+  int space_above = 0;
+  int space_below = 0;
+  int desired_x = 0;
+  int desired_y = 0;
+  int max_x = 0;
+  int max_y = 0;
+
+  g_return_val_if_fail(anchor != NULL, placement);
+
+  anchor_x = anchor->x;
+  anchor_y = anchor->y;
+  anchor_width = MAX(anchor->width, 1);
+  anchor_height = MAX(anchor->height, 1);
+  monitor_width = anchor->monitor_width > 0 ? anchor->monitor_width : anchor_x + MAX(menu_width, anchor_width);
+  monitor_height = anchor->monitor_height > 0 ? anchor->monitor_height : anchor_y + anchor_height + MAX(menu_height, 1);
+
+  placement.width = CLAMP(MAX(menu_width, anchor_width), 1, MAX(monitor_width, 1));
+  placement.height = CLAMP(MAX(menu_height, 1), 1, MAX(monitor_height, 1));
+  space_above = anchor_y - monitor_y;
+  space_below = (monitor_y + monitor_height) - (anchor_y + anchor_height);
+  placement.side = BS_BAR_POPUP_SIDE_BOTTOM;
+  if (placement.height > space_below && space_above > space_below) {
+    placement.side = BS_BAR_POPUP_SIDE_TOP;
+  }
+
+  desired_x = anchor_x + (anchor_width / 2) - (placement.width / 2);
+  max_x = monitor_x + monitor_width - placement.width;
+  placement.x = CLAMP(desired_x, monitor_x, MAX(max_x, monitor_x));
+
+  if (placement.side == BS_BAR_POPUP_SIDE_TOP) {
+    desired_y = anchor_y - placement.height;
+  } else {
+    desired_y = anchor_y + anchor_height;
+  }
+  max_y = monitor_y + monitor_height - placement.height;
+  placement.y = CLAMP(desired_y, monitor_y, MAX(max_y, monitor_y));
+  return placement;
 }

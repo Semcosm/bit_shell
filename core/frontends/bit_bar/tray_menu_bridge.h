@@ -16,6 +16,23 @@ typedef struct {
   int monitor_height;
 } BsBarPopupAnchor;
 
+typedef enum {
+  BS_BAR_POPUP_SIDE_BOTTOM = 0,
+  BS_BAR_POPUP_SIDE_TOP,
+} BsBarPopupSide;
+
+typedef struct {
+  int x;
+  int y;
+  int width;
+  int height;
+  BsBarPopupSide side;
+} BsBarPopupPlacement;
+
+BsBarPopupPlacement bs_bar_popup_compute_placement(const BsBarPopupAnchor *anchor,
+                                                   int menu_width,
+                                                   int menu_height);
+
 BsBarTrayMenuBridge *bs_bar_tray_menu_bridge_new(GtkWidget *overlay_parent);
 void bs_bar_tray_menu_bridge_free(BsBarTrayMenuBridge *bridge);
 

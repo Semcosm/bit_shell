@@ -145,6 +145,7 @@ static void bs_bar_app_open_tray_menu(BsBarApp *app,
                                       const char *item_id,
                                       GtkWidget *button);
 static void bs_bar_app_close_tray_menu(BsBarApp *app);
+static void bs_bar_app_on_tray_menu_close_requested(gpointer user_data);
 static void bs_bar_app_on_tray_menu_item_activated(const char *item_id,
                                                    gint32 menu_item_id,
                                                    gpointer user_data);
@@ -1732,6 +1733,7 @@ bs_bar_app_open_tray_menu(BsBarApp *app, const char *item_id, GtkWidget *button)
   if (tree != NULL && tree->root != NULL && tree->root->children != NULL && tree->root->children->len > 0) {
     GtkWidget *menu_view = bs_bar_tray_menu_view_new(tree,
                                                      bs_bar_app_on_tray_menu_item_activated,
+                                                     bs_bar_app_on_tray_menu_close_requested,
                                                      app);
 
     if (!bs_bar_tray_menu_bridge_present(app->tray_menu_bridge,
@@ -1764,6 +1766,15 @@ bs_bar_app_close_tray_menu(BsBarApp *app) {
   }
 
   bs_bar_tray_menu_bridge_close(app->tray_menu_bridge);
+}
+
+static void
+bs_bar_app_on_tray_menu_close_requested(gpointer user_data) {
+  BsBarApp *app = user_data;
+
+  g_return_if_fail(app != NULL);
+
+  bs_bar_app_close_tray_menu(app);
 }
 
 static void

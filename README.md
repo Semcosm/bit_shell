@@ -54,6 +54,7 @@ bit_shell/
 - `pin_app` / `unpin_app` 与 `state.json` 落盘
 - `config.toml` stub 自动生成、TOML 标量解析、Dock 配置 normalize
 - `bit_dock` 的 magnification、局部横向让位、启动 bounce 与运行态指示点
+- `bit_bar` 的工作区/标题/时钟/tray 基础前端，以及 shell-owned tray menu 渲染、popup 生命周期管理与键盘导航
 
 当前 `bit_dock` 的动画链路采用：
 

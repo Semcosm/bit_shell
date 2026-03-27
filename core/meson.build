@@ -120,3 +120,18 @@ bit_bar_tray_menu_roundtrip_test = executable(
 )
 
 test('bit_bar_tray_menu_roundtrip', bit_bar_tray_menu_roundtrip_test)
+
+bit_bar_tray_menu_ux_test = executable(
+  'bit_bar_tray_menu_ux_test',
+  [
+    'frontends/bit_bar/tray_menu_ux_test.c',
+    'frontends/bit_bar/tray_menu_bridge.c',
+    'frontends/bit_bar/tray_menu_view.c',
+    'model/tray_menu.c',
+  ],
+  include_directories: core_includes,
+  dependencies: [glib_dep, gtk4_dep],
+  install: false,
+)
+
+test('bit_bar_tray_menu_ux', bit_bar_tray_menu_ux_test)

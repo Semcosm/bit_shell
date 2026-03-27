@@ -23,6 +23,7 @@
 - `IconPixmap` 与 `AttentionIconPixmap` 当前已沿 `tray` topic / snapshot 透传到前端；前端会优先用 theme icon，其次用 pixmap，再退回文本。多 host 管理仍后置到后续阶段；`shell.tray_watcher_name` 已支持通过 app 层重建 tray service 热切换。
 - 前端图标选择顺序当前是：可用 theme icon 优先，其次匹配 slot 的 pixmap，最后才退回文本 fallback。
 - `bit_bar` 当前已引入 tray menu bridge：它拥有 popup 生命周期、anchor 与单实例打开策略；菜单树本身仍由 shell 持有。
+- 当前 popup placement 与菜单交互仍完全收在前端 bridge/view 子系统：shell 不参与键盘导航、滚动策略或 monitor-aware clamp。
 
 ## 交互建议
 
@@ -30,3 +31,4 @@
 - 右键优先打开 shell-owned tray menu；当 shell 尚未持有该 item 的菜单树时，再回退到 `ContextMenu(x, y)`
 - 菜单定位坐标由 `bit_bar` 上报给 shell
 - 同一时刻只允许一个 tray popup 打开；点击空白区、按 `Esc`、monitor 变化或前端重连时应关闭
+- shell-owned 菜单打开后应支持基础键盘导航、submenu 进退、disabled 跳过和普通项激活后自动关闭
