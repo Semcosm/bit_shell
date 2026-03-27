@@ -21,6 +21,9 @@ bool bs_tray_menu_service_sync_item(BsTrayMenuService *service,
 bool bs_tray_menu_service_remove_item(BsTrayMenuService *service,
                                       const char *item_id);
 void bs_tray_menu_service_clear_items(BsTrayMenuService *service);
+bool bs_tray_menu_service_refresh_item(BsTrayMenuService *service,
+                                       const char *item_id,
+                                       GError **error);
 bool bs_tray_menu_service_activate_menu_item(BsTrayMenuService *service,
                                              const char *item_id,
                                              gint32 menu_item_id,

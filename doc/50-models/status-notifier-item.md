@@ -29,6 +29,7 @@
 
 - 左键映射 `Activate(x, y)`
 - 右键优先打开 shell-owned tray menu；当 shell 尚未持有该 item 的菜单树时，再回退到 `ContextMenu(x, y)`
+- 对带 `menu_object_path` 的 item，前端应优先等待或主动刷新 shell-owned menu tree，而不是直接把它降级成 legacy `ContextMenu(x, y)` 项
 - 菜单定位坐标由 `bit_bar` 上报给 shell
 - 同一时刻只允许一个 tray popup 打开；点击空白区、按 `Esc`、monitor 变化或前端重连时应关闭
 - shell-owned 菜单打开后应支持基础键盘导航、submenu 进退、disabled 跳过和普通项激活后自动关闭

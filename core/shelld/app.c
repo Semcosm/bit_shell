@@ -855,6 +855,16 @@ bs_shelld_app_tray_context_menu_item(BsShelldApp *app,
 }
 
 bool
+bs_shelld_app_tray_menu_refresh_item(BsShelldApp *app,
+                                     const char *item_id,
+                                     GError **error) {
+  g_return_val_if_fail(app != NULL, false);
+  g_return_val_if_fail(item_id != NULL, false);
+
+  return bs_tray_menu_service_refresh_item(app->tray_menu_service, item_id, error);
+}
+
+bool
 bs_shelld_app_tray_menu_activate_item(BsShelldApp *app,
                                       const char *item_id,
                                       int32_t menu_item_id,

@@ -135,6 +135,7 @@ static void bs_bar_app_request_tray_context_menu(BsBarApp *app,
                                                  const char *item_id,
                                                  int x,
                                                  int y);
+static void bs_bar_app_request_tray_menu_refresh(BsBarApp *app, const char *item_id);
 static void bs_bar_app_request_tray_menu_activate(BsBarApp *app,
                                                   const char *item_id,
                                                   gint32 menu_item_id);
@@ -1652,6 +1653,28 @@ bs_bar_app_request_tray_context_menu(BsBarApp *app, const char *item_id, int x, 
 }
 
 static void
+bs_bar_app_request_tray_menu_refresh(BsBarApp *app, const char *item_id) {
+  g_autofree char *escaped_item_id = NULL;
+  g_autofree char *request = NULL;
+  g_autoptr(GError) error = NULL;
+
+  g_return_if_fail(app != NULL);
+  g_return_if_fail(item_id != NULL);
+
+  if (*item_id == '\0' || !bs_frontend_ipc_client_ready(app->ipc_client)) {
+    return;
+  }
+
+  escaped_item_id = g_strescape(item_id, NULL);
+  request = g_strdup_printf("{\"op\":\"tray_menu_refresh\",\"item_id\":\"%s\"}",
+                            escaped_item_id != NULL ? escaped_item_id : "");
+  if (!bs_frontend_ipc_client_send_line(app->ipc_client, request, &error)) {
+    g_warning("[bit_bar] tray_menu_refresh request failed: %s",
+              error != NULL ? error->message : "unknown error");
+  }
+}
+
+static void
 bs_bar_app_request_tray_menu_activate(BsBarApp *app, const char *item_id, gint32 menu_item_id) {
   g_autofree char *request = NULL;
   g_autoptr(GError) error = NULL;
@@ -1705,7 +1728,10 @@ bs_bar_app_get_tray_popup_anchor(BsBarApp *app, GtkWidget *widget, BsBarPopupAnc
 
 static void
 bs_bar_app_open_tray_menu(BsBarApp *app, const char *item_id, GtkWidget *button) {
+  const BsBarTrayItemView *item = NULL;
   const BsTrayMenuTree *tree = NULL;
+  gboolean has_menu_object = FALSE;
+  gboolean has_shell_menu_tree = FALSE;
   BsBarPopupAnchor popup_anchor = {0};
   int anchor_x = 0;
   int anchor_y = 0;
@@ -1729,8 +1755,20 @@ bs_bar_app_open_tray_menu(BsBarApp *app, const char *item_id, GtkWidget *button)
     gtk_popover_popdown(GTK_POPOVER(app->clock_popover));
   }
 
+  item = bs_bar_view_model_lookup_tray_item(app->view_model, item_id);
   tree = bs_bar_view_model_lookup_tray_menu(app->view_model, item_id);
-  if (tree != NULL && tree->root != NULL && tree->root->children != NULL && tree->root->children->len > 0) {
+  has_menu_object = item != NULL && item->menu_object_path != NULL && *item->menu_object_path != '\0';
+  has_shell_menu_tree = tree != NULL && tree->root != NULL && tree->root->children != NULL
+                        && tree->root->children->len > 0;
+
+  g_debug("[bit_bar] tray menu open item=%s has_menu_object=%d has_tree=%d revision=%u children=%u",
+          item_id,
+          has_menu_object ? 1 : 0,
+          has_shell_menu_tree ? 1 : 0,
+          tree != NULL ? tree->revision : 0,
+          tree != NULL && tree->root != NULL && tree->root->children != NULL ? tree->root->children->len : 0);
+
+  if (has_shell_menu_tree) {
     GtkWidget *menu_view = bs_bar_tray_menu_view_new(tree,
                                                      bs_bar_app_on_tray_menu_item_activated,
                                                      bs_bar_app_on_tray_menu_close_requested,
@@ -1745,6 +1783,12 @@ bs_bar_app_open_tray_menu(BsBarApp *app, const char *item_id, GtkWidget *button)
     return;
   }
 
+  if (has_menu_object) {
+    g_debug("[bit_bar] tray menu refresh pending shell-owned menu for item=%s", item_id);
+    bs_bar_app_request_tray_menu_refresh(app, item_id);
+    return;
+  }
+
   if (!bs_bar_tray_menu_bridge_toggle(app->tray_menu_bridge, item_id, &popup_anchor)) {
     return;
   }
@@ -1754,6 +1798,7 @@ bs_bar_app_open_tray_menu(BsBarApp *app, const char *item_id, GtkWidget *button)
     anchor_y = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "bs-bar-tray-anchor-y"));
   }
 
+  g_debug("[bit_bar] tray menu fallback to legacy ContextMenu for item=%s", item_id);
   bs_bar_app_request_tray_context_menu(app, item_id, anchor_x, anchor_y);
 }
 

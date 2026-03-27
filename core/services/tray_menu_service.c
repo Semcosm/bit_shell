@@ -217,6 +217,12 @@ bs_tray_menu_service_refresh_registration(BsTrayMenuRegistration *registration, 
     return false;
   }
 
+  g_debug("[bit_shelld] tray menu refresh item=%s path=%s revision=%u children=%u",
+          registration->item_id,
+          registration->menu_object_path != NULL ? registration->menu_object_path : "",
+          tree.revision,
+          tree.root != NULL && tree.root->children != NULL ? tree.root->children->len : 0);
+
   bs_state_store_begin_update(registration->service->store);
   (void) bs_state_store_replace_tray_menu(registration->service->store, &tree);
   bs_state_store_finish_update(registration->service->store);
@@ -382,6 +388,28 @@ bs_tray_menu_service_clear_items(BsTrayMenuService *service) {
     g_hash_table_remove_all(service->registrations);
   }
   bs_state_store_clear_tray_menus(service->store);
+}
+
+bool
+bs_tray_menu_service_refresh_item(BsTrayMenuService *service,
+                                  const char *item_id,
+                                  GError **error) {
+  BsTrayMenuRegistration *registration = NULL;
+
+  g_return_val_if_fail(service != NULL, false);
+  g_return_val_if_fail(item_id != NULL, false);
+
+  registration = bs_tray_menu_service_lookup_registration(service, item_id);
+  if (registration == NULL) {
+    g_set_error(error,
+                G_IO_ERROR,
+                G_IO_ERROR_NOT_FOUND,
+                "tray menu registration not found for item_id: %s",
+                item_id);
+    return false;
+  }
+
+  return bs_tray_menu_service_refresh_registration(registration, error);
 }
 
 bool

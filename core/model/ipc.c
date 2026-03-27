@@ -33,6 +33,7 @@ static const BsNameMap bs_command_names[] = {
   {"unpin_app", BS_COMMAND_UNPIN_APP},
   {"tray_activate", BS_COMMAND_TRAY_ACTIVATE},
   {"tray_context_menu", BS_COMMAND_TRAY_CONTEXT_MENU},
+  {"tray_menu_refresh", BS_COMMAND_TRAY_MENU_REFRESH},
   {"tray_menu_activate", BS_COMMAND_TRAY_MENU_ACTIVATE},
 };
 

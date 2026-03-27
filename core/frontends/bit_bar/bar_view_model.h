@@ -136,6 +136,8 @@ bool bs_bar_view_model_can_open_window_list(BsBarViewModel *vm);
 GPtrArray *bs_bar_view_model_workspace_items(BsBarViewModel *vm);
 GPtrArray *bs_bar_view_model_window_candidates(BsBarViewModel *vm);
 GPtrArray *bs_bar_view_model_tray_items(BsBarViewModel *vm);
+const BsBarTrayItemView *bs_bar_view_model_lookup_tray_item(BsBarViewModel *vm,
+                                                            const char *item_id);
 const BsTrayMenuTree *bs_bar_view_model_lookup_tray_menu(BsBarViewModel *vm,
                                                          const char *item_id);
 

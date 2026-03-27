@@ -67,6 +67,9 @@ bool bs_shelld_app_tray_context_menu_item(BsShelldApp *app,
                                           int32_t x,
                                           int32_t y,
                                           GError **error);
+bool bs_shelld_app_tray_menu_refresh_item(BsShelldApp *app,
+                                          const char *item_id,
+                                          GError **error);
 bool bs_shelld_app_tray_menu_activate_item(BsShelldApp *app,
                                            const char *item_id,
                                            int32_t menu_item_id,

@@ -380,11 +380,15 @@ bs_command_router_parse_request(BsCommandRouter *router,
       break;
     case BS_COMMAND_TRAY_ACTIVATE:
     case BS_COMMAND_TRAY_CONTEXT_MENU:
+    case BS_COMMAND_TRAY_MENU_REFRESH:
       if (!bs_json_extract_string_field(payload, "item_id", value_buf, sizeof(value_buf))) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "missing item_id");
         return false;
       }
       request->item_id = g_strdup(value_buf);
+      if (request->command == BS_COMMAND_TRAY_MENU_REFRESH) {
+        break;
+      }
       (void) bs_json_extract_int_field(payload, "x", &request->x);
       (void) bs_json_extract_int_field(payload, "y", &request->y);
       break;
@@ -513,6 +517,12 @@ bs_command_router_handle_request(BsCommandRouter *router,
                                                 request->x,
                                                 request->y,
                                                 error)) {
+        return false;
+      }
+      *response_json = bs_command_router_build_ack_json(request, true);
+      return true;
+    case BS_COMMAND_TRAY_MENU_REFRESH:
+      if (!bs_shelld_app_tray_menu_refresh_item(router->app, request->item_id, error)) {
         return false;
       }
       *response_json = bs_command_router_build_ack_json(request, true);

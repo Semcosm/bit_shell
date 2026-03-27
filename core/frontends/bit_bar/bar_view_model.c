@@ -1474,6 +1474,14 @@ bs_bar_view_model_tray_items(BsBarViewModel *vm) {
   return vm->tray_items;
 }
 
+const BsBarTrayItemView *
+bs_bar_view_model_lookup_tray_item(BsBarViewModel *vm, const char *item_id) {
+  g_return_val_if_fail(vm != NULL, NULL);
+  g_return_val_if_fail(item_id != NULL, NULL);
+
+  return g_hash_table_lookup(vm->tray_items_by_id, item_id);
+}
+
 const BsTrayMenuTree *
 bs_bar_view_model_lookup_tray_menu(BsBarViewModel *vm, const char *item_id) {
   g_return_val_if_fail(vm != NULL, NULL);
