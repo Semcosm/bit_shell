@@ -11,16 +11,32 @@ struct _BsBarTrayController {
   gboolean pending_open;
 };
 
+#define BS_BAR_TRAY_MENU_SAFE_EDGE 8
+#define BS_BAR_TRAY_MENU_DEFAULT_MIN_WIDTH 220
+#define BS_BAR_TRAY_MENU_DEFAULT_MAX_WIDTH 640
+#define BS_BAR_TRAY_MENU_DEFAULT_MAX_HEIGHT 480
+
+#ifndef BS_BAR_TRAY_CONTROLLER_COMPUTE_MENU_CONSTRAINTS
+#define BS_BAR_TRAY_CONTROLLER_COMPUTE_MENU_CONSTRAINTS(button, out) \
+  bs_bar_tray_controller_compute_menu_constraints((button), (out))
+#endif
+
 static void bs_bar_tray_controller_set_pending_open(BsBarTrayController *controller,
                                                     const char *item_id);
 static void bs_bar_tray_controller_clear_pending_open(BsBarTrayController *controller);
 static void bs_bar_tray_controller_set_open_item(BsBarTrayController *controller,
                                                  const char *item_id);
 static void bs_bar_tray_controller_clear_open_item(BsBarTrayController *controller);
+static BsBarTrayMenuSizeConstraints bs_bar_tray_menu_constraints_default(void);
+static BsBarTrayMenuSizeConstraints bs_bar_tray_menu_compute_constraints_for_geometry(int monitor_width,
+                                                                                      int monitor_height,
+                                                                                      int anchor_y);
 static GtkWidget *bs_bar_tray_controller_lookup_button(BsBarTrayController *controller,
                                                        const char *item_id);
 static gboolean bs_bar_tray_controller_get_item_anchor(GtkWidget *button, int *out_x, int *out_y);
 static gboolean bs_bar_tray_controller_get_menu_tree_ready(const BsTrayMenuTree *tree);
+static gboolean bs_bar_tray_controller_compute_menu_constraints(GtkWidget *button,
+                                                                BsBarTrayMenuSizeConstraints *out);
 static void bs_bar_tray_controller_close_open_menu(BsBarTrayController *controller);
 static gboolean bs_bar_tray_controller_present_menu(BsBarTrayController *controller,
                                                     const char *item_id,
@@ -65,6 +81,35 @@ bs_bar_tray_controller_clear_open_item(BsBarTrayController *controller) {
   g_clear_pointer(&controller->open_item_id, g_free);
 }
 
+static BsBarTrayMenuSizeConstraints
+bs_bar_tray_menu_constraints_default(void) {
+  return (BsBarTrayMenuSizeConstraints) {
+    .min_width = BS_BAR_TRAY_MENU_DEFAULT_MIN_WIDTH,
+    .max_width = BS_BAR_TRAY_MENU_DEFAULT_MAX_WIDTH,
+    .max_height = BS_BAR_TRAY_MENU_DEFAULT_MAX_HEIGHT,
+  };
+}
+
+static BsBarTrayMenuSizeConstraints
+bs_bar_tray_menu_compute_constraints_for_geometry(int monitor_width,
+                                                  int monitor_height,
+                                                  int anchor_y) {
+  BsBarTrayMenuSizeConstraints constraints = bs_bar_tray_menu_constraints_default();
+  const int max_monitor_width = monitor_width - BS_BAR_TRAY_MENU_SAFE_EDGE * 2;
+  const int max_monitor_height = MAX(monitor_height - BS_BAR_TRAY_MENU_SAFE_EDGE * 2, 120);
+  const int preferred_max_height = monitor_height - anchor_y - BS_BAR_TRAY_MENU_SAFE_EDGE;
+  const int min_preferred_height = MIN(180, max_monitor_height);
+
+  constraints.max_width = max_monitor_width;
+  constraints.max_height = CLAMP(preferred_max_height,
+                                 min_preferred_height,
+                                 max_monitor_height);
+  constraints.min_width = MAX(constraints.min_width, 160);
+  constraints.max_width = MAX(constraints.max_width, constraints.min_width);
+  constraints.max_height = MAX(constraints.max_height, 120);
+  return constraints;
+}
+
 static GtkWidget *
 bs_bar_tray_controller_lookup_button(BsBarTrayController *controller, const char *item_id) {
   g_return_val_if_fail(controller != NULL, NULL);
@@ -91,6 +136,56 @@ bs_bar_tray_controller_get_menu_tree_ready(const BsTrayMenuTree *tree) {
   return bs_bar_tray_menu_tree_has_visible_entries(tree);
 }
 
+static gboolean
+bs_bar_tray_controller_compute_menu_constraints(GtkWidget *button,
+                                                BsBarTrayMenuSizeConstraints *out) {
+  GtkNative *native = NULL;
+  GdkSurface *surface = NULL;
+  GdkDisplay *display = NULL;
+  GdkMonitor *monitor = NULL;
+  GdkRectangle geometry = {0};
+  double surface_y = 0.0;
+  int anchor_x = 0;
+  int anchor_y = 0;
+  int monitor_anchor_y = 0;
+
+  g_return_val_if_fail(out != NULL, FALSE);
+  g_return_val_if_fail(GTK_IS_WIDGET(button), FALSE);
+
+  if (!bs_bar_tray_controller_get_item_anchor(button, &anchor_x, &anchor_y)) {
+    return FALSE;
+  }
+  (void) anchor_x;
+
+  native = gtk_widget_get_native(button);
+  if (native == NULL) {
+    return FALSE;
+  }
+
+  surface = gtk_native_get_surface(native);
+  if (surface == NULL) {
+    return FALSE;
+  }
+
+  display = gdk_surface_get_display(surface);
+  if (display == NULL) {
+    return FALSE;
+  }
+
+  monitor = gdk_display_get_monitor_at_surface(display, surface);
+  if (monitor == NULL) {
+    return FALSE;
+  }
+
+  gdk_monitor_get_geometry(monitor, &geometry);
+  gtk_native_get_surface_transform(native, NULL, &surface_y);
+  monitor_anchor_y = anchor_y + (int) surface_y;
+  *out = bs_bar_tray_menu_compute_constraints_for_geometry(geometry.width,
+                                                           geometry.height,
+                                                           monitor_anchor_y);
+  return TRUE;
+}
+
 static void
 bs_bar_tray_controller_close_open_menu(BsBarTrayController *controller) {
   GtkWidget *button = NULL;
@@ -112,13 +207,19 @@ bs_bar_tray_controller_present_menu(BsBarTrayController *controller,
                                     GtkWidget *button,
                                     const BsTrayMenuTree *tree) {
   GtkWidget *menu_view = NULL;
+  BsBarTrayMenuSizeConstraints constraints = {0};
 
   g_return_val_if_fail(controller != NULL, FALSE);
   g_return_val_if_fail(item_id != NULL, FALSE);
   g_return_val_if_fail(button != NULL, FALSE);
   g_return_val_if_fail(tree != NULL, FALSE);
 
+  if (!BS_BAR_TRAY_CONTROLLER_COMPUTE_MENU_CONSTRAINTS(button, &constraints)) {
+    constraints = bs_bar_tray_menu_constraints_default();
+  }
+
   menu_view = bs_bar_tray_menu_view_new(tree,
+                                        &constraints,
                                         bs_bar_tray_controller_on_menu_item_activated,
                                         bs_bar_tray_controller_on_menu_close_requested,
                                         controller);

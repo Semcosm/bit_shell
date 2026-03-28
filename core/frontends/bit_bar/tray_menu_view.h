@@ -11,6 +11,12 @@ typedef void (*BsBarTrayMenuActivateFn)(const char *item_id,
 typedef void (*BsBarTrayMenuRequestCloseFn)(gpointer user_data);
 
 typedef struct {
+  int min_width;
+  int max_width;
+  int max_height;
+} BsBarTrayMenuSizeConstraints;
+
+typedef struct {
   gboolean interactive;
   gboolean opens_submenu;
 } BsBarTrayMenuNavItem;
@@ -23,6 +29,7 @@ int bs_bar_tray_menu_nav_find_next(const BsBarTrayMenuNavItem *items,
 gboolean bs_bar_tray_menu_tree_has_visible_entries(const BsTrayMenuTree *tree);
 
 GtkWidget *bs_bar_tray_menu_view_new(const BsTrayMenuTree *tree,
+                                     const BsBarTrayMenuSizeConstraints *constraints,
                                      BsBarTrayMenuActivateFn activate_cb,
                                      BsBarTrayMenuRequestCloseFn close_cb,
                                      gpointer user_data);
