@@ -38,12 +38,12 @@ test_tray_menu_roundtrip_snapshot_to_vm(void) {
 
   root = make_node(0, BS_TRAY_MENU_ITEM_SUBMENU, NULL, true, false);
   g_ptr_array_add(root->children,
-                  make_node(1, BS_TRAY_MENU_ITEM_NORMAL, "Open", true, false));
+                  make_node(1, BS_TRAY_MENU_ITEM_NORMAL, "显示主窗口", true, false));
   g_ptr_array_add(root->children,
-                  make_node(2, BS_TRAY_MENU_ITEM_CHECK, "Enabled", true, true));
-  submenu = make_node(3, BS_TRAY_MENU_ITEM_SUBMENU, "More", true, false);
+                  make_node(2, BS_TRAY_MENU_ITEM_CHECK, "Enabled \"调试\"", true, true));
+  submenu = make_node(3, BS_TRAY_MENU_ITEM_SUBMENU, "更多", true, false);
   g_ptr_array_add(submenu->children,
-                  make_node(4, BS_TRAY_MENU_ITEM_RADIO, "Choice A", true, false));
+                  make_node(4, BS_TRAY_MENU_ITEM_RADIO, "路径\\测试", true, false));
   g_ptr_array_add(submenu->children,
                   make_node(5, BS_TRAY_MENU_ITEM_RADIO, "Choice B", true, true));
   g_ptr_array_add(root->children, submenu);
@@ -65,16 +65,32 @@ test_tray_menu_roundtrip_snapshot_to_vm(void) {
   g_assert_nonnull(parsed->root);
   g_assert_nonnull(parsed->root->children);
   g_assert_cmpuint(parsed->root->children->len, ==, 3);
+  g_assert_cmpstr(((BsTrayMenuNode *) g_ptr_array_index(parsed->root->children, 0))->label,
+                  ==,
+                  "显示主窗口");
   g_assert_cmpint(((BsTrayMenuNode *) g_ptr_array_index(parsed->root->children, 1))->kind,
                   ==,
                   BS_TRAY_MENU_ITEM_CHECK);
+  g_assert_cmpstr(((BsTrayMenuNode *) g_ptr_array_index(parsed->root->children, 1))->label,
+                  ==,
+                  "Enabled \"调试\"");
   g_assert_true(((BsTrayMenuNode *) g_ptr_array_index(parsed->root->children, 1))->checked);
   g_assert_cmpint(((BsTrayMenuNode *) g_ptr_array_index(parsed->root->children, 2))->kind,
                   ==,
                   BS_TRAY_MENU_ITEM_SUBMENU);
+  g_assert_cmpstr(((BsTrayMenuNode *) g_ptr_array_index(parsed->root->children, 2))->label,
+                  ==,
+                  "更多");
   g_assert_cmpuint(((BsTrayMenuNode *) g_ptr_array_index(parsed->root->children, 2))->children->len,
                    ==,
                    2);
+  g_assert_cmpstr(((BsTrayMenuNode *) g_ptr_array_index(((BsTrayMenuNode *) g_ptr_array_index(parsed->root->children,
+                                                                                               2))
+                                                          ->children,
+                                                        0))
+                    ->label,
+                  ==,
+                  "路径\\测试");
 
   bs_bar_view_model_free(vm);
   bs_snapshot_clear(&snapshot);

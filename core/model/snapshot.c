@@ -107,9 +107,46 @@ bs_hash_table_new_full_map(GDestroyNotify value_destroy) {
 
 static void
 bs_json_append_quoted(GString *json, const char *value) {
-  char *escaped = g_strescape(value != NULL ? value : "", NULL);
-  g_string_append_printf(json, "\"%s\"", escaped != NULL ? escaped : "");
-  g_free(escaped);
+  g_autofree char *valid = NULL;
+  const char *cursor = NULL;
+
+  g_return_if_fail(json != NULL);
+
+  valid = g_utf8_make_valid(value != NULL ? value : "", -1);
+  g_string_append_c(json, '"');
+  for (cursor = valid; *cursor != '\0'; cursor++) {
+    switch (*cursor) {
+      case '"':
+        g_string_append(json, "\\\"");
+        break;
+      case '\\':
+        g_string_append(json, "\\\\");
+        break;
+      case '\b':
+        g_string_append(json, "\\b");
+        break;
+      case '\f':
+        g_string_append(json, "\\f");
+        break;
+      case '\n':
+        g_string_append(json, "\\n");
+        break;
+      case '\r':
+        g_string_append(json, "\\r");
+        break;
+      case '\t':
+        g_string_append(json, "\\t");
+        break;
+      default:
+        if ((guchar) *cursor < 0x20) {
+          g_string_append_printf(json, "\\u%04x", (guint) (guchar) *cursor);
+        } else {
+          g_string_append_c(json, *cursor);
+        }
+        break;
+    }
+  }
+  g_string_append_c(json, '"');
 }
 
 static void
