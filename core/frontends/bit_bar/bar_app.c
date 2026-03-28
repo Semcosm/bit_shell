@@ -12,6 +12,20 @@
 #define BS_BAR_NAMESPACE "bit-shell-bar"
 #define BS_BAR_RECONNECT_DELAY_MS 2000U
 
+static gboolean
+bs_bar_tray_popup_debug_enabled(void) {
+  const char *value = g_getenv("BIT_BAR_TRAY_POPUP_DEBUG");
+
+  return value != NULL && *value != '\0' && g_strcmp0(value, "0") != 0;
+}
+
+#define BS_BAR_TRAY_POPUP_DEBUG(...) \
+  G_STMT_START { \
+    if (bs_bar_tray_popup_debug_enabled()) { \
+      g_message(__VA_ARGS__); \
+    } \
+  } G_STMT_END
+
 typedef struct {
   int content_margin_x;
   int content_margin_y;
@@ -88,6 +102,7 @@ static GdkMonitor *bs_bar_app_select_target_monitor(BsBarApp *app);
 static GdkMonitor *bs_bar_app_lookup_monitor_by_name(const char *name);
 static void bs_bar_app_schedule_post_layout(BsBarApp *app);
 static gboolean bs_bar_app_post_layout_cb(gpointer user_data);
+static int bs_bar_app_widget_sibling_index(GtkWidget *widget);
 static void bs_bar_app_sync_width_constraints(BsBarApp *app);
 static void bs_bar_app_validate_surface_width(BsBarApp *app);
 static gboolean bs_bar_app_monitor_matches_name(GdkMonitor *monitor, const char *name);
@@ -770,6 +785,31 @@ bs_bar_app_lookup_monitor_by_name(const char *name) {
   }
 
   return NULL;
+}
+
+static gboolean
+bs_bar_app_widget_sibling_index(GtkWidget *widget) {
+  GtkWidget *parent = NULL;
+  GtkWidget *child = NULL;
+  int index = 0;
+
+  g_return_val_if_fail(widget != NULL, -1);
+
+  parent = gtk_widget_get_parent(widget);
+  if (parent == NULL) {
+    return -1;
+  }
+
+  child = gtk_widget_get_first_child(parent);
+  while (child != NULL) {
+    if (child == widget) {
+      return index;
+    }
+    child = gtk_widget_get_next_sibling(child);
+    index++;
+  }
+
+  return -1;
 }
 
 static gboolean
@@ -1753,34 +1793,69 @@ bs_bar_app_get_tray_popup_anchor(BsBarApp *app, GtkWidget *widget, BsBarPopupAnc
   graphene_point_t src = GRAPHENE_POINT_INIT_ZERO;
   graphene_point_t dest = GRAPHENE_POINT_INIT_ZERO;
   GdkRectangle geometry = {0};
+  const char *debug_item_id = NULL;
   int width = 0;
   int height = 0;
+  int widget_index = -1;
+  int root_width = 0;
+  int root_height = 0;
 
   g_return_val_if_fail(app != NULL, false);
   g_return_val_if_fail(widget != NULL, false);
   g_return_val_if_fail(out_anchor != NULL, false);
 
   *out_anchor = (BsBarPopupAnchor) {0};
+  debug_item_id = bs_bar_tray_item_button_item_id(widget);
+  widget_index = bs_bar_app_widget_sibling_index(widget);
+  root_width = app->window != NULL ? gtk_widget_get_width(GTK_WIDGET(app->window)) : 0;
+  root_height = app->window != NULL ? gtk_widget_get_height(GTK_WIDGET(app->window)) : 0;
   if (app->content_box == NULL) {
-    g_debug("[bit_bar] tray popup anchor failed: missing content_box");
+    BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] anchor/fail item=%s widget=%p index=%d reason=missing_content_box",
+                            debug_item_id != NULL ? debug_item_id : "(null)",
+                            widget,
+                            widget_index);
     return false;
   }
 
   width = gtk_widget_get_width(widget);
   height = gtk_widget_get_height(widget);
+  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] anchor/input item=%s widget=%p index=%d width=%d height=%d content_box=%p",
+                          debug_item_id != NULL ? debug_item_id : "(null)",
+                          widget,
+                          widget_index,
+                          width,
+                          height,
+                          app->content_box);
+  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] anchor/widget allocation width=%d height=%d root_width=%d root_height=%d",
+                          gtk_widget_get_width(widget),
+                          gtk_widget_get_height(widget),
+                          root_width,
+                          root_height);
   if (width <= 0 || height <= 0) {
-    g_debug("[bit_bar] tray popup anchor failed: invalid widget size width=%d height=%d",
-            width,
-            height);
+    BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] anchor/fail item=%s widget=%p index=%d reason=invalid_widget_size width=%d height=%d",
+                            debug_item_id != NULL ? debug_item_id : "(null)",
+                            widget,
+                            widget_index,
+                            width,
+                            height);
     return false;
   }
 
   src.x = (float) width / 2.0f;
   src.y = (float) height;
+  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] anchor/src bottom_center=(%.1f, %.1f)",
+                          (double) src.x,
+                          (double) src.y);
   if (!gtk_widget_compute_point(widget, app->content_box, &src, &dest)) {
-    g_debug("[bit_bar] tray popup anchor failed: compute_point to content_box");
+    BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] anchor/fail item=%s widget=%p index=%d reason=compute_point_to_content_box",
+                            debug_item_id != NULL ? debug_item_id : "(null)",
+                            widget,
+                            widget_index);
     return false;
   }
+  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] anchor/dest in_content_box=(%.1f, %.1f)",
+                          (double) dest.x,
+                          (double) dest.y);
 
   out_anchor->local_x = (int) dest.x - (width / 2);
   out_anchor->local_y = (int) dest.y;
@@ -1795,15 +1870,15 @@ bs_bar_app_get_tray_popup_anchor(BsBarApp *app, GtkWidget *widget, BsBarPopupAnc
     out_anchor->monitor_height = geometry.height;
   }
 
-  g_debug("[bit_bar] tray popup anchor ready local=(%d,%d %dx%d) monitor=(%d,%d %dx%d)",
-          out_anchor->local_x,
-          out_anchor->local_y,
-          out_anchor->width,
-          out_anchor->height,
-          out_anchor->monitor_x,
-          out_anchor->monitor_y,
-          out_anchor->monitor_width,
-          out_anchor->monitor_height);
+  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] anchor/output rect=(x=%d y=%d w=%d h=%d) monitor=(x=%d y=%d w=%d h=%d)",
+                          out_anchor->local_x,
+                          out_anchor->local_y,
+                          out_anchor->width,
+                          out_anchor->height,
+                          out_anchor->monitor_x,
+                          out_anchor->monitor_y,
+                          out_anchor->monitor_width,
+                          out_anchor->monitor_height);
   return true;
 }
 

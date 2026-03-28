@@ -2,6 +2,20 @@
 
 #include "frontends/bit_bar/tray_menu_view.h"
 
+static gboolean
+bs_bar_tray_popup_debug_enabled(void) {
+  const char *value = g_getenv("BIT_BAR_TRAY_POPUP_DEBUG");
+
+  return value != NULL && *value != '\0' && g_strcmp0(value, "0") != 0;
+}
+
+#define BS_BAR_TRAY_POPUP_DEBUG(...) \
+  G_STMT_START { \
+    if (bs_bar_tray_popup_debug_enabled()) { \
+      g_message(__VA_ARGS__); \
+    } \
+  } G_STMT_END
+
 struct _BsBarTrayController {
   BsBarViewModel *view_model;
   BsBarTrayMenuBridge *menu_bridge;
@@ -125,20 +139,42 @@ bs_bar_tray_controller_present_menu(BsBarTrayController *controller,
   g_return_val_if_fail(button != NULL, FALSE);
   g_return_val_if_fail(tree != NULL, FALSE);
 
+  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] controller/present begin item=%s button=%p tree_revision=%u",
+                          item_id,
+                          button,
+                          tree->revision);
   if (!bs_bar_tray_controller_get_popup_anchor(controller, button, &popup_anchor)) {
-    g_debug("[bit_bar] tray controller refused local menu without popup anchor item=%s",
-            item_id);
+    BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] controller/present anchor_ready=0 anchor=(x=%d y=%d w=%d h=%d monitor=%d,%d %dx%d)",
+                            popup_anchor.local_x,
+                            popup_anchor.local_y,
+                            popup_anchor.width,
+                            popup_anchor.height,
+                            popup_anchor.monitor_x,
+                            popup_anchor.monitor_y,
+                            popup_anchor.monitor_width,
+                            popup_anchor.monitor_height);
+    BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] controller/refuse local_menu_without_anchor item=%s",
+                            item_id);
     return FALSE;
   }
+  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] controller/present anchor_ready=1 anchor=(x=%d y=%d w=%d h=%d monitor=%d,%d %dx%d)",
+                          popup_anchor.local_x,
+                          popup_anchor.local_y,
+                          popup_anchor.width,
+                          popup_anchor.height,
+                          popup_anchor.monitor_x,
+                          popup_anchor.monitor_y,
+                          popup_anchor.monitor_width,
+                          popup_anchor.monitor_height);
 
   menu_view = bs_bar_tray_menu_view_new(tree,
                                         bs_bar_tray_controller_on_menu_item_activated,
                                         bs_bar_tray_controller_on_menu_close_requested,
                                         controller);
   if (menu_view == NULL) {
-    g_debug("[bit_bar] tray controller refused empty menu item=%s revision=%u",
-            item_id,
-            tree->revision);
+    BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] controller/refuse empty_menu item=%s revision=%u",
+                            item_id,
+                            tree->revision);
     bs_bar_tray_menu_bridge_clear_content(controller->menu_bridge);
     return FALSE;
   }
@@ -146,7 +182,7 @@ bs_bar_tray_controller_present_menu(BsBarTrayController *controller,
   if (bs_bar_tray_menu_bridge_is_open_for(controller->menu_bridge, item_id)) {
     bs_bar_tray_menu_bridge_set_content(controller->menu_bridge, menu_view);
     if (!bs_bar_tray_menu_bridge_open(controller->menu_bridge, item_id, &popup_anchor)) {
-      g_debug("[bit_bar] tray controller failed to reopen menu item=%s", item_id);
+      BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] controller/reopen failed item=%s", item_id);
       return FALSE;
     }
     bs_bar_tray_controller_clear_pending_open(controller);
@@ -154,7 +190,7 @@ bs_bar_tray_controller_present_menu(BsBarTrayController *controller,
   }
 
   if (!bs_bar_tray_menu_bridge_present(controller->menu_bridge, item_id, &popup_anchor, menu_view)) {
-    g_debug("[bit_bar] tray controller failed to present local menu item=%s", item_id);
+    BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] controller/present failed item=%s", item_id);
     return FALSE;
   }
 
@@ -268,6 +304,10 @@ bs_bar_tray_controller_handle_menu(BsBarTrayController *controller,
     if (!bs_bar_tray_controller_present_menu(controller, item_id, button, tree)) {
       if (controller->ops.request_context_menu != NULL
           && bs_bar_tray_controller_get_item_anchor(button, &anchor_x, &anchor_y)) {
+        BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] controller/fallback remote_context_menu item=%s anchor=(%d,%d)",
+                                item_id,
+                                anchor_x,
+                                anchor_y);
         controller->ops.request_context_menu(item_id,
                                              anchor_x,
                                              anchor_y,
@@ -324,7 +364,8 @@ bs_bar_tray_controller_sync_from_vm(BsBarTrayController *controller) {
   }
 
   if (bs_bar_view_model_lookup_tray_item(controller->view_model, controller->pending_item_id) == NULL) {
-    g_debug("[bit_bar] pending tray menu item disappeared item=%s", controller->pending_item_id);
+    BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] controller/pending disappeared item=%s",
+                            controller->pending_item_id);
     bs_bar_tray_controller_clear_pending_open(controller);
     return;
   }
@@ -336,18 +377,22 @@ bs_bar_tray_controller_sync_from_vm(BsBarTrayController *controller) {
 
   button = bs_bar_tray_controller_lookup_button(controller, controller->pending_item_id);
   if (button == NULL) {
-    g_debug("[bit_bar] pending tray menu lost button before present item=%s",
-            controller->pending_item_id);
+    BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] controller/pending lost_button item=%s",
+                            controller->pending_item_id);
     bs_bar_tray_controller_clear_pending_open(controller);
     return;
   }
 
+  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] controller/pending reopen item=%s button=%p tree_ready=%d",
+                          controller->pending_item_id,
+                          button,
+                          bs_bar_tray_controller_get_menu_tree_ready(open_tree) ? 1 : 0);
   if (!bs_bar_tray_controller_present_menu(controller,
                                            controller->pending_item_id,
                                            button,
                                            open_tree)) {
-    g_debug("[bit_bar] pending tray menu lost popup anchor item=%s",
-            controller->pending_item_id);
+    BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] controller/pending lost_popup_anchor item=%s",
+                            controller->pending_item_id);
     bs_bar_tray_controller_clear_pending_open(controller);
   }
 }

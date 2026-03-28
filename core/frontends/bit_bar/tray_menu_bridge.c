@@ -1,5 +1,19 @@
 #include "frontends/bit_bar/tray_menu_bridge.h"
 
+static gboolean
+bs_bar_tray_popup_debug_enabled(void) {
+  const char *value = g_getenv("BIT_BAR_TRAY_POPUP_DEBUG");
+
+  return value != NULL && *value != '\0' && g_strcmp0(value, "0") != 0;
+}
+
+#define BS_BAR_TRAY_POPUP_DEBUG(...) \
+  G_STMT_START { \
+    if (bs_bar_tray_popup_debug_enabled()) { \
+      g_message(__VA_ARGS__); \
+    } \
+  } G_STMT_END
+
 struct _BsBarTrayMenuBridge {
   GtkWidget *overlay_parent;
   GtkWidget *popover;
@@ -16,6 +30,7 @@ static void bs_bar_tray_menu_bridge_measure_content(BsBarTrayMenuBridge *bridge,
                                                     int *out_width,
                                                     int *out_height);
 static void bs_bar_tray_menu_bridge_clear_open_state(BsBarTrayMenuBridge *bridge);
+static gboolean bs_bar_tray_menu_bridge_log_after_popup(gpointer user_data);
 static void bs_bar_tray_menu_bridge_on_closed(GtkPopover *popover, gpointer user_data);
 static gboolean bs_bar_tray_menu_bridge_on_key_pressed(GtkEventControllerKey *controller,
                                                        guint keyval,
@@ -33,40 +48,49 @@ bs_bar_tray_menu_bridge_apply_anchor(BsBarTrayMenuBridge *bridge, const BsBarPop
   g_return_if_fail(bridge != NULL);
   g_return_if_fail(anchor != NULL);
 
+  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] bridge/apply input anchor=(x=%d y=%d w=%d h=%d monitor=%d,%d %dx%d)",
+                          anchor->local_x,
+                          anchor->local_y,
+                          anchor->width,
+                          anchor->height,
+                          anchor->monitor_x,
+                          anchor->monitor_y,
+                          anchor->monitor_width,
+                          anchor->monitor_height);
   if (anchor->width <= 0 || anchor->height <= 0) {
-    g_debug("[bit_bar] tray menu bridge refused invalid anchor size width=%d height=%d",
-            anchor->width,
-            anchor->height);
+    BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] bridge/refuse invalid_anchor_size width=%d height=%d",
+                            anchor->width,
+                            anchor->height);
     return;
   }
 
   if (anchor->monitor_width < 0 || anchor->monitor_height < 0) {
-    g_debug("[bit_bar] tray menu bridge got incomplete monitor bounds width=%d height=%d",
-            anchor->monitor_width,
-            anchor->monitor_height);
+    BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] bridge/warn incomplete_monitor_bounds width=%d height=%d",
+                            anchor->monitor_width,
+                            anchor->monitor_height);
   }
 
   bs_bar_tray_menu_bridge_measure_content(bridge, &menu_width, &menu_height);
+  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] bridge/apply measured menu_size=%dx%d",
+                          menu_width,
+                          menu_height);
   placement = bs_bar_popup_compute_placement(anchor, menu_width, menu_height);
+  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] bridge/apply placement side=%d x=%d y=%d width=%d height=%d",
+                          placement.side,
+                          placement.x,
+                          placement.y,
+                          placement.width,
+                          placement.height);
   bridge->anchor = *anchor;
   rect.x = anchor->local_x;
   rect.y = anchor->local_y;
   rect.width = MAX(anchor->width, 1);
   rect.height = MAX(anchor->height, 1);
-  g_debug("[bit_bar] tray menu anchor local_rect=(%d,%d %dx%d) bounds=(%d,%d %dx%d) placement=(%d,%d %dx%d) side=%s",
-          rect.x,
-          rect.y,
-          rect.width,
-          rect.height,
-          anchor->monitor_x,
-          anchor->monitor_y,
-          anchor->monitor_width,
-          anchor->monitor_height,
-          placement.x,
-          placement.y,
-          placement.width,
-          placement.height,
-          placement.side == BS_BAR_POPUP_SIDE_TOP ? "top" : "bottom");
+  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] bridge/apply pointing_to rect=(x=%d y=%d w=%d h=%d)",
+                          rect.x,
+                          rect.y,
+                          rect.width,
+                          rect.height);
   gtk_popover_set_position(GTK_POPOVER(bridge->popover),
                            placement.side == BS_BAR_POPUP_SIDE_TOP ? GTK_POS_TOP
                                                                    : GTK_POS_BOTTOM);
@@ -78,6 +102,11 @@ bs_bar_tray_menu_bridge_apply_anchor(BsBarTrayMenuBridge *bridge, const BsBarPop
   gtk_widget_set_size_request(bridge->popover,
                               MAX(placement.width, 1),
                               MAX(placement.height, 1));
+  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] bridge/apply margins start=%d top=%d end=%d bottom=%d",
+                          gtk_widget_get_margin_start(bridge->popover),
+                          gtk_widget_get_margin_top(bridge->popover),
+                          gtk_widget_get_margin_end(bridge->popover),
+                          gtk_widget_get_margin_bottom(bridge->popover));
 }
 
 static void
@@ -125,6 +154,21 @@ bs_bar_tray_menu_bridge_clear_open_state(BsBarTrayMenuBridge *bridge) {
 
   g_clear_pointer(&bridge->open_item_id, g_free);
   bridge->anchor = (BsBarPopupAnchor) {0};
+}
+
+static gboolean
+bs_bar_tray_menu_bridge_log_after_popup(gpointer user_data) {
+  BsBarTrayMenuBridge *bridge = user_data;
+
+  if (bridge == NULL || bridge->popover == NULL) {
+    return G_SOURCE_REMOVE;
+  }
+
+  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] bridge/after_popup popover_alloc=%dx%d visible=%d",
+                          gtk_widget_get_width(bridge->popover),
+                          gtk_widget_get_height(bridge->popover),
+                          gtk_widget_get_visible(bridge->popover) ? 1 : 0);
+  return G_SOURCE_REMOVE;
 }
 
 void
@@ -261,10 +305,10 @@ bs_bar_tray_menu_bridge_open(BsBarTrayMenuBridge *bridge,
   }
 
   if (!bridge->has_real_content || bridge->content_widget == NULL) {
-    g_debug("[bit_bar] tray menu bridge refused to open item=%s without real content has_real_content=%d content=%p",
-            item_id,
-            bridge->has_real_content ? 1 : 0,
-            bridge->content_widget);
+    BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] bridge/refuse open_without_content item=%s has_real_content=%d content=%p",
+                            item_id,
+                            bridge->has_real_content ? 1 : 0,
+                            bridge->content_widget);
     return FALSE;
   }
 
@@ -272,6 +316,9 @@ bs_bar_tray_menu_bridge_open(BsBarTrayMenuBridge *bridge,
   g_free(bridge->open_item_id);
   bridge->open_item_id = g_strdup(item_id);
   gtk_popover_popup(GTK_POPOVER(bridge->popover));
+  if (bs_bar_tray_popup_debug_enabled()) {
+    g_idle_add(bs_bar_tray_menu_bridge_log_after_popup, bridge);
+  }
   gtk_widget_grab_focus(bridge->content_widget != NULL ? bridge->content_widget : bridge->popover);
   return true;
 }
@@ -320,10 +367,10 @@ bs_bar_tray_menu_bridge_toggle(BsBarTrayMenuBridge *bridge,
   }
 
   if (!bridge->has_real_content || bridge->content_widget == NULL) {
-    g_debug("[bit_bar] tray menu bridge refused to toggle item=%s without real content has_real_content=%d content=%p",
-            item_id,
-            bridge->has_real_content ? 1 : 0,
-            bridge->content_widget);
+    BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] bridge/refuse toggle_without_content item=%s has_real_content=%d content=%p",
+                            item_id,
+                            bridge->has_real_content ? 1 : 0,
+                            bridge->content_widget);
     return FALSE;
   }
 
