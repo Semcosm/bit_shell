@@ -1,7 +1,8 @@
 #include "frontends/bit_bar/tray_menu_view.h"
 
-#define BS_BAR_TRAY_MENU_MIN_WIDTH 220
-#define BS_BAR_TRAY_MENU_MAX_HEIGHT 360
+#define BS_BAR_TRAY_MENU_DEFAULT_MIN_WIDTH 220
+#define BS_BAR_TRAY_MENU_DEFAULT_MAX_WIDTH 640
+#define BS_BAR_TRAY_MENU_DEFAULT_MAX_HEIGHT 480
 
 typedef struct {
   const BsTrayMenuNode *node;
@@ -18,6 +19,7 @@ typedef struct {
 typedef struct {
   char *item_id;
   const BsTrayMenuTree *tree;
+  BsBarTrayMenuSizeConstraints constraints;
   GtkWidget *root;
   GtkWidget *header;
   GtkWidget *back_button;
@@ -47,6 +49,7 @@ static BsBarTrayMenuLevel *bs_bar_tray_menu_view_current_level(BsBarTrayMenuView
 static char *bs_bar_tray_menu_view_strip_label(const BsTrayMenuNode *node);
 static gboolean bs_bar_tray_menu_view_node_opens_submenu(const BsTrayMenuNode *node);
 static gboolean bs_bar_tray_menu_view_node_is_interactive(const BsTrayMenuNode *node);
+static void bs_bar_tray_menu_view_normalize_constraints(BsBarTrayMenuSizeConstraints *constraints);
 static GtkWidget *bs_bar_tray_menu_view_build_row(BsBarTrayMenuView *view,
                                                   const BsTrayMenuNode *node,
                                                   gboolean is_selected);
@@ -56,6 +59,7 @@ static void bs_bar_tray_menu_view_move_selection(BsBarTrayMenuView *view, int de
 static void bs_bar_tray_menu_view_activate_selected(BsBarTrayMenuView *view);
 static void bs_bar_tray_menu_view_push_submenu(BsBarTrayMenuView *view, const BsTrayMenuNode *node);
 static void bs_bar_tray_menu_view_pop_submenu(BsBarTrayMenuView *view);
+static void bs_bar_tray_menu_view_represent_ancestor_popover(BsBarTrayMenuView *view);
 static void bs_bar_tray_menu_view_rebuild(BsBarTrayMenuView *view);
 static gboolean bs_bar_tray_menu_view_on_key_pressed(GtkEventControllerKey *controller,
                                                      guint keyval,
@@ -193,6 +197,25 @@ bs_bar_tray_menu_view_node_is_interactive(const BsTrayMenuNode *node) {
   return TRUE;
 }
 
+static void
+bs_bar_tray_menu_view_normalize_constraints(BsBarTrayMenuSizeConstraints *constraints) {
+  g_return_if_fail(constraints != NULL);
+
+  if (constraints->min_width <= 0) {
+    constraints->min_width = BS_BAR_TRAY_MENU_DEFAULT_MIN_WIDTH;
+  }
+  if (constraints->max_width <= 0) {
+    constraints->max_width = BS_BAR_TRAY_MENU_DEFAULT_MAX_WIDTH;
+  }
+  if (constraints->max_height <= 0) {
+    constraints->max_height = BS_BAR_TRAY_MENU_DEFAULT_MAX_HEIGHT;
+  }
+
+  constraints->min_width = MAX(constraints->min_width, 160);
+  constraints->max_width = MAX(constraints->max_width, constraints->min_width);
+  constraints->max_height = MAX(constraints->max_height, 120);
+}
+
 static GtkWidget *
 bs_bar_tray_menu_view_build_row(BsBarTrayMenuView *view,
                                 const BsTrayMenuNode *node,
@@ -238,6 +261,8 @@ bs_bar_tray_menu_view_build_row(BsBarTrayMenuView *view,
   gtk_widget_add_css_class(indicator, "bit-bar-tray-menu-indicator");
   gtk_widget_add_css_class(label, "bit-bar-tray-menu-label");
   gtk_widget_add_css_class(affordance, "bit-bar-tray-menu-affordance");
+  gtk_widget_set_hexpand(row_box, TRUE);
+  gtk_widget_set_halign(row_box, GTK_ALIGN_FILL);
   gtk_widget_set_size_request(indicator, 28, -1);
   gtk_widget_set_size_request(affordance, 18, -1);
   gtk_widget_set_halign(indicator, GTK_ALIGN_START);
@@ -245,8 +270,10 @@ bs_bar_tray_menu_view_build_row(BsBarTrayMenuView *view,
   gtk_widget_set_hexpand(label, TRUE);
   gtk_widget_set_halign(label, GTK_ALIGN_FILL);
   gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
-  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
-  gtk_label_set_single_line_mode(GTK_LABEL(label), TRUE);
+  gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+  gtk_label_set_wrap_mode(GTK_LABEL(label), PANGO_WRAP_WORD_CHAR);
+  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_NONE);
+  gtk_label_set_single_line_mode(GTK_LABEL(label), FALSE);
   gtk_label_set_text(GTK_LABEL(label), display_label);
 
   if (node->kind == BS_TRAY_MENU_ITEM_CHECK) {
@@ -426,6 +453,19 @@ bs_bar_tray_menu_view_pop_submenu(BsBarTrayMenuView *view) {
 }
 
 static void
+bs_bar_tray_menu_view_represent_ancestor_popover(BsBarTrayMenuView *view) {
+  GtkWidget *popover = NULL;
+
+  g_return_if_fail(view != NULL);
+  g_return_if_fail(view->root != NULL);
+
+  popover = gtk_widget_get_ancestor(view->root, GTK_TYPE_POPOVER);
+  if (popover != NULL && gtk_widget_get_visible(popover)) {
+    gtk_popover_present(GTK_POPOVER(popover));
+  }
+}
+
+static void
 bs_bar_tray_menu_view_rebuild(BsBarTrayMenuView *view) {
   const BsTrayMenuNode *current = NULL;
   BsBarTrayMenuLevel *level = NULL;
@@ -455,6 +495,7 @@ bs_bar_tray_menu_view_rebuild(BsBarTrayMenuView *view) {
   g_ptr_array_set_size(view->rows, 0);
 
   if (current == NULL || current->children == NULL) {
+    bs_bar_tray_menu_view_represent_ancestor_popover(view);
     return;
   }
 
@@ -496,10 +537,10 @@ bs_bar_tray_menu_view_rebuild(BsBarTrayMenuView *view) {
 
   if (level != NULL && level->selected_index < 0) {
     bs_bar_tray_menu_view_select_first_interactive(view);
-    return;
+  } else {
+    bs_bar_tray_menu_view_apply_selection(view, TRUE);
   }
-
-  bs_bar_tray_menu_view_apply_selection(view, TRUE);
+  bs_bar_tray_menu_view_represent_ancestor_popover(view);
 }
 
 static gboolean
@@ -635,6 +676,7 @@ bs_bar_tray_menu_nav_find_next(const BsBarTrayMenuNavItem *items,
 
 GtkWidget *
 bs_bar_tray_menu_view_new(const BsTrayMenuTree *tree,
+                          const BsBarTrayMenuSizeConstraints *constraints,
                           BsBarTrayMenuActivateFn activate_cb,
                           BsBarTrayMenuRequestCloseFn close_cb,
                           gpointer user_data) {
@@ -655,6 +697,14 @@ bs_bar_tray_menu_view_new(const BsTrayMenuTree *tree,
   view = g_new0(BsBarTrayMenuView, 1);
   view->item_id = g_strdup(tree->item_id);
   view->tree = tree;
+  view->constraints = constraints != NULL
+                        ? *constraints
+                        : (BsBarTrayMenuSizeConstraints) {
+                            .min_width = BS_BAR_TRAY_MENU_DEFAULT_MIN_WIDTH,
+                            .max_width = BS_BAR_TRAY_MENU_DEFAULT_MAX_WIDTH,
+                            .max_height = BS_BAR_TRAY_MENU_DEFAULT_MAX_HEIGHT,
+                          };
+  bs_bar_tray_menu_view_normalize_constraints(&view->constraints);
   view->activate_cb = activate_cb;
   view->close_cb = close_cb;
   view->user_data = user_data;
@@ -680,9 +730,7 @@ bs_bar_tray_menu_view_new(const BsTrayMenuTree *tree,
   gtk_widget_set_margin_bottom(root, 8);
   gtk_widget_set_margin_start(root, 8);
   gtk_widget_set_margin_end(root, 8);
-  gtk_widget_set_size_request(root, BS_BAR_TRAY_MENU_MIN_WIDTH, -1);
   gtk_widget_set_focusable(root, TRUE);
-  gtk_widget_set_hexpand(root, TRUE);
   gtk_widget_set_hexpand(view->content_box, TRUE);
   gtk_label_set_xalign(GTK_LABEL(view->title_label), 0.0f);
   gtk_label_set_ellipsize(GTK_LABEL(view->title_label), PANGO_ELLIPSIZE_END);
@@ -693,10 +741,14 @@ bs_bar_tray_menu_view_new(const BsTrayMenuTree *tree,
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller),
                                  GTK_POLICY_NEVER,
                                  GTK_POLICY_AUTOMATIC);
+  gtk_scrolled_window_set_min_content_width(GTK_SCROLLED_WINDOW(scroller),
+                                            view->constraints.min_width);
+  gtk_scrolled_window_set_max_content_width(GTK_SCROLLED_WINDOW(scroller),
+                                            view->constraints.max_width);
   gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(scroller),
-                                             BS_BAR_TRAY_MENU_MAX_HEIGHT);
+                                             view->constraints.max_height);
   gtk_scrolled_window_set_propagate_natural_width(GTK_SCROLLED_WINDOW(scroller), TRUE);
-  gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scroller), FALSE);
+  gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scroller), TRUE);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller), view->content_box);
 
   gtk_box_append(GTK_BOX(header_row), back_button);
