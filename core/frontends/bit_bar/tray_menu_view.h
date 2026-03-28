@@ -20,6 +20,8 @@ int bs_bar_tray_menu_nav_find_next(const BsBarTrayMenuNavItem *items,
                                    int current_index,
                                    int delta);
 
+gboolean bs_bar_tray_menu_tree_has_visible_entries(const BsTrayMenuTree *tree);
+
 GtkWidget *bs_bar_tray_menu_view_new(const BsTrayMenuTree *tree,
                                      BsBarTrayMenuActivateFn activate_cb,
                                      BsBarTrayMenuRequestCloseFn close_cb,

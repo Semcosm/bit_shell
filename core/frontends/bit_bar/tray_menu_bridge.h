@@ -6,10 +6,12 @@
 typedef struct _BsBarTrayMenuBridge BsBarTrayMenuBridge;
 
 typedef struct {
-  int x;
-  int y;
+  /* Popover anchor rect in overlay_parent local coordinates. */
+  int local_x;
+  int local_y;
   int width;
   int height;
+  /* Monitor bounds expressed in the same overlay_parent local space. */
   int monitor_x;
   int monitor_y;
   int monitor_width;
@@ -35,6 +37,8 @@ BsBarPopupPlacement bs_bar_popup_compute_placement(const BsBarPopupAnchor *ancho
 
 BsBarTrayMenuBridge *bs_bar_tray_menu_bridge_new(GtkWidget *overlay_parent);
 void bs_bar_tray_menu_bridge_free(BsBarTrayMenuBridge *bridge);
+void bs_bar_tray_menu_bridge_set_content(BsBarTrayMenuBridge *bridge, GtkWidget *content);
+void bs_bar_tray_menu_bridge_clear_content(BsBarTrayMenuBridge *bridge);
 
 gboolean bs_bar_tray_menu_bridge_open(BsBarTrayMenuBridge *bridge,
                                       const char *item_id,

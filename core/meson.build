@@ -74,6 +74,8 @@ bit_bar_sources = files(
   'frontends/bit_bar/tray_icon_resolver.h',
   'frontends/bit_bar/tray_menu_bridge.c',
   'frontends/bit_bar/tray_menu_bridge.h',
+  'frontends/bit_bar/tray_controller.c',
+  'frontends/bit_bar/tray_controller.h',
   'frontends/bit_bar/tray_menu_view.c',
   'frontends/bit_bar/tray_menu_view.h',
   'frontends/bit_bar/tray_strip.c',

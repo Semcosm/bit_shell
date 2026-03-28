@@ -40,6 +40,8 @@ static void bs_bar_tray_menu_view_free(gpointer data);
 static void bs_bar_tray_menu_level_free(gpointer data);
 static void bs_bar_tray_menu_row_ref_free(gpointer data);
 static void bs_bar_tray_menu_row_data_free(gpointer data);
+static gboolean bs_bar_tray_menu_node_is_displayable(const BsTrayMenuNode *node);
+static gboolean bs_bar_tray_menu_children_have_visible_entries(GPtrArray *children);
 static const BsTrayMenuNode *bs_bar_tray_menu_view_current_node(BsBarTrayMenuView *view);
 static BsBarTrayMenuLevel *bs_bar_tray_menu_view_current_level(BsBarTrayMenuView *view);
 static char *bs_bar_tray_menu_view_strip_label(const BsTrayMenuNode *node);
@@ -90,6 +92,37 @@ bs_bar_tray_menu_row_ref_free(gpointer data) {
 static void
 bs_bar_tray_menu_row_data_free(gpointer data) {
   g_free(data);
+}
+
+static gboolean
+bs_bar_tray_menu_node_is_displayable(const BsTrayMenuNode *node) {
+  g_return_val_if_fail(node != NULL, FALSE);
+
+  return node->visible && node->kind != BS_TRAY_MENU_ITEM_SEPARATOR;
+}
+
+static gboolean
+bs_bar_tray_menu_children_have_visible_entries(GPtrArray *children) {
+  g_return_val_if_fail(children != NULL, FALSE);
+
+  for (guint i = 0; i < children->len; i++) {
+    const BsTrayMenuNode *node = g_ptr_array_index(children, i);
+
+    if (node != NULL && bs_bar_tray_menu_node_is_displayable(node)) {
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+gboolean
+bs_bar_tray_menu_tree_has_visible_entries(const BsTrayMenuTree *tree) {
+  if (tree == NULL || tree->root == NULL || tree->root->children == NULL) {
+    return FALSE;
+  }
+
+  return bs_bar_tray_menu_children_have_visible_entries(tree->root->children);
 }
 
 static const BsTrayMenuNode *
@@ -615,6 +648,9 @@ bs_bar_tray_menu_view_new(const BsTrayMenuTree *tree,
 
   g_return_val_if_fail(tree != NULL, NULL);
   g_return_val_if_fail(tree->root != NULL, NULL);
+  if (!bs_bar_tray_menu_tree_has_visible_entries(tree)) {
+    return NULL;
+  }
 
   view = g_new0(BsBarTrayMenuView, 1);
   view->item_id = g_strdup(tree->item_id);
