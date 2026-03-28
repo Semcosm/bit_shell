@@ -1753,6 +1753,8 @@ bs_bar_app_get_tray_popup_anchor(BsBarApp *app, GtkWidget *widget, BsBarPopupAnc
   graphene_point_t src = GRAPHENE_POINT_INIT_ZERO;
   graphene_point_t dest = GRAPHENE_POINT_INIT_ZERO;
   GdkRectangle geometry = {0};
+  int width = 0;
+  int height = 0;
 
   g_return_val_if_fail(app != NULL, false);
   g_return_val_if_fail(widget != NULL, false);
@@ -1760,17 +1762,30 @@ bs_bar_app_get_tray_popup_anchor(BsBarApp *app, GtkWidget *widget, BsBarPopupAnc
 
   *out_anchor = (BsBarPopupAnchor) {0};
   if (app->content_box == NULL) {
+    g_debug("[bit_bar] tray popup anchor failed: missing content_box");
     return false;
   }
 
+  width = gtk_widget_get_width(widget);
+  height = gtk_widget_get_height(widget);
+  if (width <= 0 || height <= 0) {
+    g_debug("[bit_bar] tray popup anchor failed: invalid widget size width=%d height=%d",
+            width,
+            height);
+    return false;
+  }
+
+  src.x = (float) width / 2.0f;
+  src.y = (float) height;
   if (!gtk_widget_compute_point(widget, app->content_box, &src, &dest)) {
+    g_debug("[bit_bar] tray popup anchor failed: compute_point to content_box");
     return false;
   }
 
-  out_anchor->local_x = (int) dest.x;
+  out_anchor->local_x = (int) dest.x - (width / 2);
   out_anchor->local_y = (int) dest.y;
-  out_anchor->width = gtk_widget_get_width(widget);
-  out_anchor->height = gtk_widget_get_height(widget);
+  out_anchor->width = width;
+  out_anchor->height = 1;
   monitor = bs_bar_app_select_target_monitor(app);
   if (monitor != NULL) {
     gdk_monitor_get_geometry(monitor, &geometry);
@@ -1779,6 +1794,16 @@ bs_bar_app_get_tray_popup_anchor(BsBarApp *app, GtkWidget *widget, BsBarPopupAnc
     out_anchor->monitor_width = geometry.width;
     out_anchor->monitor_height = geometry.height;
   }
+
+  g_debug("[bit_bar] tray popup anchor ready local=(%d,%d %dx%d) monitor=(%d,%d %dx%d)",
+          out_anchor->local_x,
+          out_anchor->local_y,
+          out_anchor->width,
+          out_anchor->height,
+          out_anchor->monitor_x,
+          out_anchor->monitor_y,
+          out_anchor->monitor_width,
+          out_anchor->monitor_height);
   return true;
 }
 

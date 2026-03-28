@@ -33,6 +33,19 @@ bs_bar_tray_menu_bridge_apply_anchor(BsBarTrayMenuBridge *bridge, const BsBarPop
   g_return_if_fail(bridge != NULL);
   g_return_if_fail(anchor != NULL);
 
+  if (anchor->width <= 0 || anchor->height <= 0) {
+    g_debug("[bit_bar] tray menu bridge refused invalid anchor size width=%d height=%d",
+            anchor->width,
+            anchor->height);
+    return;
+  }
+
+  if (anchor->monitor_width < 0 || anchor->monitor_height < 0) {
+    g_debug("[bit_bar] tray menu bridge got incomplete monitor bounds width=%d height=%d",
+            anchor->monitor_width,
+            anchor->monitor_height);
+  }
+
   bs_bar_tray_menu_bridge_measure_content(bridge, &menu_width, &menu_height);
   placement = bs_bar_popup_compute_placement(anchor, menu_width, menu_height);
   bridge->anchor = *anchor;

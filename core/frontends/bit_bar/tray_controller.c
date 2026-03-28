@@ -92,8 +92,6 @@ bs_bar_tray_controller_get_popup_anchor(BsBarTrayController *controller,
     return TRUE;
   }
 
-  out_anchor->width = MAX(gtk_widget_get_width(button), 1);
-  out_anchor->height = MAX(gtk_widget_get_height(button), 1);
   return FALSE;
 }
 
@@ -121,14 +119,18 @@ bs_bar_tray_controller_present_menu(BsBarTrayController *controller,
                                     const BsTrayMenuTree *tree) {
   BsBarPopupAnchor popup_anchor = {0};
   GtkWidget *menu_view = NULL;
-  gboolean anchor_ready = FALSE;
 
   g_return_val_if_fail(controller != NULL, FALSE);
   g_return_val_if_fail(item_id != NULL, FALSE);
   g_return_val_if_fail(button != NULL, FALSE);
   g_return_val_if_fail(tree != NULL, FALSE);
 
-  anchor_ready = bs_bar_tray_controller_get_popup_anchor(controller, button, &popup_anchor);
+  if (!bs_bar_tray_controller_get_popup_anchor(controller, button, &popup_anchor)) {
+    g_debug("[bit_bar] tray controller refused local menu without popup anchor item=%s",
+            item_id);
+    return FALSE;
+  }
+
   menu_view = bs_bar_tray_menu_view_new(tree,
                                         bs_bar_tray_controller_on_menu_item_activated,
                                         bs_bar_tray_controller_on_menu_close_requested,
@@ -141,28 +143,22 @@ bs_bar_tray_controller_present_menu(BsBarTrayController *controller,
     return FALSE;
   }
 
-  if (!anchor_ready) {
-    g_debug("[bit_bar] tray controller using fallback popup bounds item=%s size=%dx%d",
-            item_id,
-            popup_anchor.width,
-            popup_anchor.height);
-  }
-
-  bs_bar_tray_controller_clear_pending_open(controller);
   if (bs_bar_tray_menu_bridge_is_open_for(controller->menu_bridge, item_id)) {
     bs_bar_tray_menu_bridge_set_content(controller->menu_bridge, menu_view);
     if (!bs_bar_tray_menu_bridge_open(controller->menu_bridge, item_id, &popup_anchor)) {
       g_debug("[bit_bar] tray controller failed to reopen menu item=%s", item_id);
       return FALSE;
     }
+    bs_bar_tray_controller_clear_pending_open(controller);
     return TRUE;
   }
 
   if (!bs_bar_tray_menu_bridge_present(controller->menu_bridge, item_id, &popup_anchor, menu_view)) {
-    g_debug("[bit_bar] tray controller failed to present menu item=%s", item_id);
+    g_debug("[bit_bar] tray controller failed to present local menu item=%s", item_id);
     return FALSE;
   }
 
+  bs_bar_tray_controller_clear_pending_open(controller);
   return TRUE;
 }
 
@@ -269,7 +265,15 @@ bs_bar_tray_controller_handle_menu(BsBarTrayController *controller,
                     && *item->menu_object_path != '\0';
 
   if (bs_bar_tray_controller_get_menu_tree_ready(tree)) {
-    bs_bar_tray_controller_present_menu(controller, item_id, button, tree);
+    if (!bs_bar_tray_controller_present_menu(controller, item_id, button, tree)) {
+      if (controller->ops.request_context_menu != NULL
+          && bs_bar_tray_controller_get_item_anchor(button, &anchor_x, &anchor_y)) {
+        controller->ops.request_context_menu(item_id,
+                                             anchor_x,
+                                             anchor_y,
+                                             controller->ops.user_data);
+      }
+    }
     return;
   }
 
@@ -338,10 +342,14 @@ bs_bar_tray_controller_sync_from_vm(BsBarTrayController *controller) {
     return;
   }
 
-  bs_bar_tray_controller_present_menu(controller,
-                                      controller->pending_item_id,
-                                      button,
-                                      open_tree);
+  if (!bs_bar_tray_controller_present_menu(controller,
+                                           controller->pending_item_id,
+                                           button,
+                                           open_tree)) {
+    g_debug("[bit_bar] pending tray menu lost popup anchor item=%s",
+            controller->pending_item_id);
+    bs_bar_tray_controller_clear_pending_open(controller);
+  }
 }
 
 void
