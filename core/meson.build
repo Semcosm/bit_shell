@@ -72,8 +72,6 @@ bit_bar_sources = files(
   'frontends/bit_bar/clock_widget.c',
   'frontends/bit_bar/tray_icon_resolver.c',
   'frontends/bit_bar/tray_icon_resolver.h',
-  'frontends/bit_bar/tray_menu_bridge.c',
-  'frontends/bit_bar/tray_menu_bridge.h',
   'frontends/bit_bar/tray_controller.c',
   'frontends/bit_bar/tray_controller.h',
   'frontends/bit_bar/tray_menu_view.c',
@@ -127,7 +125,6 @@ bit_bar_tray_menu_ux_test = executable(
   'bit_bar_tray_menu_ux_test',
   [
     'frontends/bit_bar/tray_menu_ux_test.c',
-    'frontends/bit_bar/tray_menu_bridge.c',
     'frontends/bit_bar/tray_menu_view.c',
     'model/tray_menu.c',
   ],

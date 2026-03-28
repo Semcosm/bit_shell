@@ -12,20 +12,6 @@
 #define BS_BAR_NAMESPACE "bit-shell-bar"
 #define BS_BAR_RECONNECT_DELAY_MS 2000U
 
-static gboolean
-bs_bar_tray_popup_debug_enabled(void) {
-  const char *value = g_getenv("BIT_BAR_TRAY_POPUP_DEBUG");
-
-  return value != NULL && *value != '\0' && g_strcmp0(value, "0") != 0;
-}
-
-#define BS_BAR_TRAY_POPUP_DEBUG(...) \
-  G_STMT_START { \
-    if (bs_bar_tray_popup_debug_enabled()) { \
-      g_message(__VA_ARGS__); \
-    } \
-  } G_STMT_END
-
 typedef struct {
   int content_margin_x;
   int content_margin_y;
@@ -102,7 +88,6 @@ static GdkMonitor *bs_bar_app_select_target_monitor(BsBarApp *app);
 static GdkMonitor *bs_bar_app_lookup_monitor_by_name(const char *name);
 static void bs_bar_app_schedule_post_layout(BsBarApp *app);
 static gboolean bs_bar_app_post_layout_cb(gpointer user_data);
-static int bs_bar_app_widget_sibling_index(GtkWidget *widget);
 static void bs_bar_app_sync_width_constraints(BsBarApp *app);
 static void bs_bar_app_validate_surface_width(BsBarApp *app);
 static gboolean bs_bar_app_monitor_matches_name(GdkMonitor *monitor, const char *name);
@@ -164,12 +149,6 @@ static void bs_bar_app_tray_controller_request_menu_activate(const char *item_id
                                                              gpointer user_data);
 static GtkWidget *bs_bar_app_tray_controller_lookup_button(const char *item_id,
                                                            gpointer user_data);
-static gboolean bs_bar_app_tray_controller_resolve_popup_anchor(GtkWidget *button,
-                                                                BsBarPopupAnchor *out_anchor,
-                                                                gpointer user_data);
-static gboolean bs_bar_app_get_tray_popup_anchor(BsBarApp *app,
-                                                 GtkWidget *widget,
-                                                 BsBarPopupAnchor *out_anchor);
 static void bs_bar_app_on_workspace_button_clicked(GtkButton *button, gpointer user_data);
 static void bs_bar_app_on_title_button_clicked(GtkButton *button, gpointer user_data);
 static void bs_bar_app_on_clock_button_clicked(GtkButton *button, gpointer user_data);
@@ -788,31 +767,6 @@ bs_bar_app_lookup_monitor_by_name(const char *name) {
 }
 
 static gboolean
-bs_bar_app_widget_sibling_index(GtkWidget *widget) {
-  GtkWidget *parent = NULL;
-  GtkWidget *child = NULL;
-  int index = 0;
-
-  g_return_val_if_fail(widget != NULL, -1);
-
-  parent = gtk_widget_get_parent(widget);
-  if (parent == NULL) {
-    return -1;
-  }
-
-  child = gtk_widget_get_first_child(parent);
-  while (child != NULL) {
-    if (child == widget) {
-      return index;
-    }
-    child = gtk_widget_get_next_sibling(child);
-    index++;
-  }
-
-  return -1;
-}
-
-static gboolean
 bs_bar_app_monitor_matches_name(GdkMonitor *monitor, const char *name) {
   const char *connector = NULL;
   const char *description = NULL;
@@ -1316,13 +1270,10 @@ bs_bar_app_ensure_window(BsBarApp *app) {
       .request_menu_refresh = bs_bar_app_tray_controller_request_menu_refresh,
       .request_menu_activate = bs_bar_app_tray_controller_request_menu_activate,
       .lookup_button = bs_bar_app_tray_controller_lookup_button,
-      .resolve_popup_anchor = bs_bar_app_tray_controller_resolve_popup_anchor,
       .user_data = app,
     };
 
-    app->tray_controller = bs_bar_tray_controller_new(app->content_box,
-                                                      app->view_model,
-                                                      &tray_controller_ops);
+    app->tray_controller = bs_bar_tray_controller_new(app->view_model, &tray_controller_ops);
   }
   bs_bar_app_apply_metrics(app, &app->metrics);
 
@@ -1785,112 +1736,6 @@ bs_bar_app_tray_controller_lookup_button(const char *item_id, gpointer user_data
   }
 
   return bs_bar_tray_strip_find_item_button(app->tray_strip_box, item_id);
-}
-
-static gboolean
-bs_bar_app_get_tray_popup_anchor(BsBarApp *app, GtkWidget *widget, BsBarPopupAnchor *out_anchor) {
-  g_autoptr(GdkMonitor) monitor = NULL;
-  graphene_point_t src = GRAPHENE_POINT_INIT_ZERO;
-  graphene_point_t dest = GRAPHENE_POINT_INIT_ZERO;
-  GdkRectangle geometry = {0};
-  const char *debug_item_id = NULL;
-  int width = 0;
-  int height = 0;
-  int widget_index = -1;
-  int root_width = 0;
-  int root_height = 0;
-
-  g_return_val_if_fail(app != NULL, false);
-  g_return_val_if_fail(widget != NULL, false);
-  g_return_val_if_fail(out_anchor != NULL, false);
-
-  *out_anchor = (BsBarPopupAnchor) {0};
-  debug_item_id = bs_bar_tray_item_button_item_id(widget);
-  widget_index = bs_bar_app_widget_sibling_index(widget);
-  root_width = app->window != NULL ? gtk_widget_get_width(GTK_WIDGET(app->window)) : 0;
-  root_height = app->window != NULL ? gtk_widget_get_height(GTK_WIDGET(app->window)) : 0;
-  if (app->content_box == NULL) {
-    BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] anchor/fail item=%s widget=%p index=%d reason=missing_content_box",
-                            debug_item_id != NULL ? debug_item_id : "(null)",
-                            widget,
-                            widget_index);
-    return false;
-  }
-
-  width = gtk_widget_get_width(widget);
-  height = gtk_widget_get_height(widget);
-  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] anchor/input item=%s widget=%p index=%d width=%d height=%d content_box=%p",
-                          debug_item_id != NULL ? debug_item_id : "(null)",
-                          widget,
-                          widget_index,
-                          width,
-                          height,
-                          app->content_box);
-  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] anchor/widget allocation width=%d height=%d root_width=%d root_height=%d",
-                          gtk_widget_get_width(widget),
-                          gtk_widget_get_height(widget),
-                          root_width,
-                          root_height);
-  if (width <= 0 || height <= 0) {
-    BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] anchor/fail item=%s widget=%p index=%d reason=invalid_widget_size width=%d height=%d",
-                            debug_item_id != NULL ? debug_item_id : "(null)",
-                            widget,
-                            widget_index,
-                            width,
-                            height);
-    return false;
-  }
-
-  src.x = (float) width / 2.0f;
-  src.y = (float) height;
-  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] anchor/src bottom_center=(%.1f, %.1f)",
-                          (double) src.x,
-                          (double) src.y);
-  if (!gtk_widget_compute_point(widget, app->content_box, &src, &dest)) {
-    BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] anchor/fail item=%s widget=%p index=%d reason=compute_point_to_content_box",
-                            debug_item_id != NULL ? debug_item_id : "(null)",
-                            widget,
-                            widget_index);
-    return false;
-  }
-  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] anchor/dest in_content_box=(%.1f, %.1f)",
-                          (double) dest.x,
-                          (double) dest.y);
-
-  out_anchor->local_x = (int) dest.x - (width / 2);
-  out_anchor->local_y = (int) dest.y;
-  out_anchor->width = width;
-  out_anchor->height = 1;
-  monitor = bs_bar_app_select_target_monitor(app);
-  if (monitor != NULL) {
-    gdk_monitor_get_geometry(monitor, &geometry);
-    out_anchor->monitor_x = 0;
-    out_anchor->monitor_y = 0;
-    out_anchor->monitor_width = geometry.width;
-    out_anchor->monitor_height = geometry.height;
-  }
-
-  BS_BAR_TRAY_POPUP_DEBUG("[bit_bar] anchor/output rect=(x=%d y=%d w=%d h=%d) monitor=(x=%d y=%d w=%d h=%d)",
-                          out_anchor->local_x,
-                          out_anchor->local_y,
-                          out_anchor->width,
-                          out_anchor->height,
-                          out_anchor->monitor_x,
-                          out_anchor->monitor_y,
-                          out_anchor->monitor_width,
-                          out_anchor->monitor_height);
-  return true;
-}
-
-static gboolean
-bs_bar_app_tray_controller_resolve_popup_anchor(GtkWidget *button,
-                                                BsBarPopupAnchor *out_anchor,
-                                                gpointer user_data) {
-  BsBarApp *app = user_data;
-
-  g_return_val_if_fail(app != NULL, FALSE);
-
-  return bs_bar_app_get_tray_popup_anchor(app, button, out_anchor);
 }
 
 static void

@@ -1,24 +1,57 @@
 #include "frontends/bit_bar/tray_item_button.h"
+
 #include "frontends/bit_bar/tray_icon_resolver.h"
 
-typedef struct {
+typedef struct _BsBarTrayItemButtonWidget BsBarTrayItemButtonWidget;
+typedef struct _BsBarTrayItemButtonWidgetClass BsBarTrayItemButtonWidgetClass;
+
+#define BS_TYPE_BAR_TRAY_ITEM_BUTTON_WIDGET (bs_bar_tray_item_button_widget_get_type())
+#define BS_BAR_TRAY_ITEM_BUTTON_WIDGET(obj) \
+  (G_TYPE_CHECK_INSTANCE_CAST((obj), BS_TYPE_BAR_TRAY_ITEM_BUTTON_WIDGET, BsBarTrayItemButtonWidget))
+#define BS_IS_BAR_TRAY_ITEM_BUTTON_WIDGET(obj) \
+  (G_TYPE_CHECK_INSTANCE_TYPE((obj), BS_TYPE_BAR_TRAY_ITEM_BUTTON_WIDGET))
+
+struct _BsBarTrayItemButtonWidget {
+  GtkWidget parent_instance;
   char *item_id;
   BsBarTrayPrimaryAction primary_action;
   gboolean has_context_menu;
+  int slot_size;
   BsBarTrayItemActivateFn on_activate;
   BsBarTrayItemMenuFn on_menu;
   gpointer user_data;
-} BsBarTrayItemButtonState;
+  GtkWidget *button_child;
+  GtkPopover *popover;
+};
 
-static const char *BS_BAR_TRAY_ITEM_BUTTON_STATE_KEY = "bs-bar-tray-item-button-state";
+struct _BsBarTrayItemButtonWidgetClass {
+  GtkWidgetClass parent_class;
+};
+
+G_DEFINE_FINAL_TYPE(BsBarTrayItemButtonWidget,
+                    bs_bar_tray_item_button_widget,
+                    GTK_TYPE_WIDGET)
 
 static GtkWidget *bs_bar_tray_item_button_build_content(const BsBarTrayItemView *item,
                                                         int slot_size);
 static void bs_bar_tray_item_button_apply_affordance_classes(GtkWidget *button,
                                                              const BsBarTrayItemView *item);
 static void bs_bar_tray_item_button_clear_affordance_classes(GtkWidget *button);
-static gboolean bs_bar_tray_item_button_get_anchor(GtkWidget *button, int *out_x, int *out_y);
-static void bs_bar_tray_item_button_state_free(gpointer data);
+static void bs_bar_tray_item_button_widget_measure(GtkWidget *widget,
+                                                   GtkOrientation orientation,
+                                                   int for_size,
+                                                   int *minimum,
+                                                   int *natural,
+                                                   int *minimum_baseline,
+                                                   int *natural_baseline);
+static void bs_bar_tray_item_button_widget_size_allocate(GtkWidget *widget,
+                                                         int width,
+                                                         int height,
+                                                         int baseline);
+static void bs_bar_tray_item_button_widget_snapshot(GtkWidget *widget, GtkSnapshot *snapshot);
+static void bs_bar_tray_item_button_widget_dispose(GObject *object);
+static void bs_bar_tray_item_button_widget_finalize(GObject *object);
+static void bs_bar_tray_item_button_apply_button_geometry(BsBarTrayItemButtonWidget *self);
 static void bs_bar_tray_item_button_on_pressed(GtkGestureClick *gesture,
                                                gint n_press,
                                                gdouble x,
@@ -117,44 +150,110 @@ bs_bar_tray_item_button_apply_affordance_classes(GtkWidget *button, const BsBarT
   }
 }
 
-static gboolean
-bs_bar_tray_item_button_get_anchor(GtkWidget *button, int *out_x, int *out_y) {
-  GtkNative *native = NULL;
-  GtkWidget *native_widget = NULL;
-  graphene_point_t src = GRAPHENE_POINT_INIT_ZERO;
-  graphene_point_t dest = GRAPHENE_POINT_INIT_ZERO;
-
-  g_return_val_if_fail(button != NULL, false);
-  g_return_val_if_fail(out_x != NULL, false);
-  g_return_val_if_fail(out_y != NULL, false);
-
-  native = gtk_widget_get_native(button);
-  if (native == NULL) {
-    return false;
-  }
-
-  native_widget = GTK_WIDGET(native);
-  src.x = (float) gtk_widget_get_width(button) / 2.0f;
-  src.y = (float) gtk_widget_get_height(button);
-  if (!gtk_widget_compute_point(button, native_widget, &src, &dest)) {
-    return false;
-  }
-
-  *out_x = (int) dest.x;
-  *out_y = (int) dest.y;
-  return true;
-}
-
 static void
-bs_bar_tray_item_button_state_free(gpointer data) {
-  BsBarTrayItemButtonState *state = data;
+bs_bar_tray_item_button_widget_measure(GtkWidget *widget,
+                                       GtkOrientation orientation,
+                                       int for_size,
+                                       int *minimum,
+                                       int *natural,
+                                       int *minimum_baseline,
+                                       int *natural_baseline) {
+  BsBarTrayItemButtonWidget *self = BS_BAR_TRAY_ITEM_BUTTON_WIDGET(widget);
 
-  if (state == NULL) {
+  g_return_if_fail(minimum != NULL);
+  g_return_if_fail(natural != NULL);
+
+  if (self->button_child == NULL) {
+    *minimum = 0;
+    *natural = 0;
+    if (minimum_baseline != NULL) {
+      *minimum_baseline = -1;
+    }
+    if (natural_baseline != NULL) {
+      *natural_baseline = -1;
+    }
     return;
   }
 
-  g_clear_pointer(&state->item_id, g_free);
-  g_free(state);
+  gtk_widget_measure(self->button_child,
+                     orientation,
+                     for_size,
+                     minimum,
+                     natural,
+                     minimum_baseline,
+                     natural_baseline);
+}
+
+static void
+bs_bar_tray_item_button_widget_size_allocate(GtkWidget *widget,
+                                             int width,
+                                             int height,
+                                             int baseline) {
+  BsBarTrayItemButtonWidget *self = BS_BAR_TRAY_ITEM_BUTTON_WIDGET(widget);
+
+  if (self->button_child != NULL) {
+    gtk_widget_allocate(self->button_child, width, height, baseline, NULL);
+  }
+  if (self->popover != NULL && gtk_widget_get_visible(GTK_WIDGET(self->popover))) {
+    gtk_popover_present(self->popover);
+  }
+}
+
+static void
+bs_bar_tray_item_button_widget_snapshot(GtkWidget *widget, GtkSnapshot *snapshot) {
+  BsBarTrayItemButtonWidget *self = BS_BAR_TRAY_ITEM_BUTTON_WIDGET(widget);
+
+  g_return_if_fail(snapshot != NULL);
+
+  if (self->button_child != NULL) {
+    gtk_widget_snapshot_child(widget, self->button_child, snapshot);
+  }
+  if (self->popover != NULL && gtk_widget_get_visible(GTK_WIDGET(self->popover))) {
+    gtk_widget_snapshot_child(widget, GTK_WIDGET(self->popover), snapshot);
+  }
+}
+
+static void
+bs_bar_tray_item_button_widget_dispose(GObject *object) {
+  BsBarTrayItemButtonWidget *self = BS_BAR_TRAY_ITEM_BUTTON_WIDGET(object);
+
+  if (self->popover != NULL) {
+    gtk_popover_popdown(self->popover);
+    if (gtk_popover_get_child(self->popover) != NULL) {
+      gtk_popover_set_child(self->popover, NULL);
+    }
+    gtk_widget_unparent(GTK_WIDGET(self->popover));
+    self->popover = NULL;
+  }
+  if (self->button_child != NULL) {
+    gtk_widget_unparent(self->button_child);
+    self->button_child = NULL;
+  }
+
+  G_OBJECT_CLASS(bs_bar_tray_item_button_widget_parent_class)->dispose(object);
+}
+
+static void
+bs_bar_tray_item_button_widget_finalize(GObject *object) {
+  BsBarTrayItemButtonWidget *self = BS_BAR_TRAY_ITEM_BUTTON_WIDGET(object);
+
+  g_clear_pointer(&self->item_id, g_free);
+  G_OBJECT_CLASS(bs_bar_tray_item_button_widget_parent_class)->finalize(object);
+}
+
+static void
+bs_bar_tray_item_button_apply_button_geometry(BsBarTrayItemButtonWidget *self) {
+  GtkWidget *content = NULL;
+
+  g_return_if_fail(self != NULL);
+  g_return_if_fail(self->button_child != NULL);
+
+  gtk_widget_set_size_request(GTK_WIDGET(self), self->slot_size, self->slot_size);
+  gtk_widget_set_size_request(self->button_child, self->slot_size, self->slot_size);
+  content = gtk_button_get_child(GTK_BUTTON(self->button_child));
+  if (content != NULL) {
+    gtk_widget_set_size_request(content, self->slot_size, self->slot_size);
+  }
 }
 
 static void
@@ -163,56 +262,77 @@ bs_bar_tray_item_button_on_pressed(GtkGestureClick *gesture,
                                    gdouble x,
                                    gdouble y,
                                    gpointer user_data) {
-  GtkWidget *button = NULL;
-  BsBarTrayItemButtonState *state = NULL;
+  BsBarTrayItemButtonWidget *self = user_data;
   guint mouse_button = 0;
-  int anchor_x = 0;
-  int anchor_y = 0;
 
   (void) n_press;
   (void) x;
   (void) y;
-  (void) user_data;
 
   g_return_if_fail(GTK_IS_GESTURE_CLICK(gesture));
+  g_return_if_fail(self != NULL);
 
-  button = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
-  if (button == NULL) {
-    return;
-  }
-
-  state = g_object_get_data(G_OBJECT(button), BS_BAR_TRAY_ITEM_BUTTON_STATE_KEY);
-  if (state == NULL || state->item_id == NULL || *state->item_id == '\0') {
+  if (self->item_id == NULL || *self->item_id == '\0') {
     return;
   }
 
   mouse_button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
-  if (!bs_bar_tray_item_button_get_anchor(button, &anchor_x, &anchor_y)) {
-    anchor_x = 0;
-    anchor_y = 0;
-  }
-
   if (mouse_button == GDK_BUTTON_PRIMARY) {
-    if (state->primary_action == BS_BAR_TRAY_PRIMARY_ACTIVATE) {
-      if (state->on_activate != NULL) {
-        g_object_set_data(G_OBJECT(button), "bs-bar-tray-anchor-x", GINT_TO_POINTER(anchor_x));
-        g_object_set_data(G_OBJECT(button), "bs-bar-tray-anchor-y", GINT_TO_POINTER(anchor_y));
-        state->on_activate(button, state->item_id, state->user_data);
+    if (self->primary_action == BS_BAR_TRAY_PRIMARY_ACTIVATE) {
+      if (self->on_activate != NULL) {
+        self->on_activate(GTK_WIDGET(self), self->item_id, self->user_data);
       }
-    } else if (state->primary_action == BS_BAR_TRAY_PRIMARY_MENU) {
-      if (state->on_menu != NULL) {
-        g_object_set_data(G_OBJECT(button), "bs-bar-tray-anchor-x", GINT_TO_POINTER(anchor_x));
-        g_object_set_data(G_OBJECT(button), "bs-bar-tray-anchor-y", GINT_TO_POINTER(anchor_y));
-        state->on_menu(button, state->item_id, state->user_data);
+    } else if (self->primary_action == BS_BAR_TRAY_PRIMARY_MENU) {
+      if (self->on_menu != NULL) {
+        self->on_menu(GTK_WIDGET(self), self->item_id, self->user_data);
       }
     }
-  } else if (mouse_button == GDK_BUTTON_SECONDARY && state->has_context_menu) {
-    if (state->on_menu != NULL) {
-      g_object_set_data(G_OBJECT(button), "bs-bar-tray-anchor-x", GINT_TO_POINTER(anchor_x));
-      g_object_set_data(G_OBJECT(button), "bs-bar-tray-anchor-y", GINT_TO_POINTER(anchor_y));
-      state->on_menu(button, state->item_id, state->user_data);
+  } else if (mouse_button == GDK_BUTTON_SECONDARY && self->has_context_menu) {
+    if (self->on_menu != NULL) {
+      self->on_menu(GTK_WIDGET(self), self->item_id, self->user_data);
     }
   }
+}
+
+static void
+bs_bar_tray_item_button_widget_class_init(BsBarTrayItemButtonWidgetClass *klass) {
+  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
+  GObjectClass *object_class = G_OBJECT_CLASS(klass);
+
+  widget_class->measure = bs_bar_tray_item_button_widget_measure;
+  widget_class->size_allocate = bs_bar_tray_item_button_widget_size_allocate;
+  widget_class->snapshot = bs_bar_tray_item_button_widget_snapshot;
+  object_class->dispose = bs_bar_tray_item_button_widget_dispose;
+  object_class->finalize = bs_bar_tray_item_button_widget_finalize;
+}
+
+static void
+bs_bar_tray_item_button_widget_init(BsBarTrayItemButtonWidget *self) {
+  GtkGesture *gesture = NULL;
+
+  self->slot_size = 24;
+  self->button_child = gtk_button_new();
+  self->popover = GTK_POPOVER(gtk_popover_new());
+
+  gtk_widget_set_focusable(GTK_WIDGET(self), FALSE);
+  gtk_widget_set_overflow(GTK_WIDGET(self), GTK_OVERFLOW_VISIBLE);
+  gtk_widget_set_parent(self->button_child, GTK_WIDGET(self));
+  gtk_widget_set_parent(GTK_WIDGET(self->popover), GTK_WIDGET(self));
+  gtk_popover_set_position(self->popover, GTK_POS_BOTTOM);
+  gtk_popover_set_autohide(self->popover, true);
+  gtk_popover_set_cascade_popdown(self->popover, true);
+  gtk_popover_set_has_arrow(self->popover, false);
+  gtk_widget_add_css_class(GTK_WIDGET(self->popover), "bit-bar-tray-menu-popover");
+
+  gesture = gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture), 0);
+  g_signal_connect(gesture,
+                   "pressed",
+                   G_CALLBACK(bs_bar_tray_item_button_on_pressed),
+                   self);
+  gtk_widget_add_controller(self->button_child, GTK_EVENT_CONTROLLER(gesture));
+
+  bs_bar_tray_item_button_apply_button_geometry(self);
 }
 
 GtkWidget *
@@ -221,73 +341,149 @@ bs_bar_tray_item_button_new(const BsBarTrayItemView *item,
                             BsBarTrayItemActivateFn on_activate,
                             BsBarTrayItemMenuFn on_menu,
                             gpointer user_data) {
-  GtkWidget *button = NULL;
-  GtkGesture *gesture = NULL;
-  BsBarTrayItemButtonState *state = NULL;
+  BsBarTrayItemButtonWidget *self = NULL;
 
   g_return_val_if_fail(item != NULL, NULL);
 
-  button = gtk_button_new();
-  state = g_new0(BsBarTrayItemButtonState, 1);
-  state->on_activate = on_activate;
-  state->on_menu = on_menu;
-  state->user_data = user_data;
-  g_object_set_data_full(G_OBJECT(button),
-                         BS_BAR_TRAY_ITEM_BUTTON_STATE_KEY,
-                         state,
-                         bs_bar_tray_item_button_state_free);
+  self = g_object_new(bs_bar_tray_item_button_widget_get_type(), NULL);
+  self->on_activate = on_activate;
+  self->on_menu = on_menu;
+  self->user_data = user_data;
+  bs_bar_tray_item_button_update(GTK_WIDGET(self), item, slot_size);
+  return GTK_WIDGET(self);
+}
 
-  gesture = gtk_gesture_click_new();
-  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture), 0);
-  g_signal_connect(gesture,
-                   "pressed",
-                   G_CALLBACK(bs_bar_tray_item_button_on_pressed),
-                   NULL);
-  gtk_widget_add_controller(button, GTK_EVENT_CONTROLLER(gesture));
+void
+bs_bar_tray_item_button_apply_slot_size(GtkWidget *button, int slot_size) {
+  BsBarTrayItemButtonWidget *self = NULL;
 
-  bs_bar_tray_item_button_update(button, item, slot_size);
-  return button;
+  if (!BS_IS_BAR_TRAY_ITEM_BUTTON_WIDGET(button)) {
+    return;
+  }
+
+  self = BS_BAR_TRAY_ITEM_BUTTON_WIDGET(button);
+  self->slot_size = slot_size;
+  bs_bar_tray_item_button_apply_button_geometry(self);
+  gtk_widget_queue_resize(button);
 }
 
 void
 bs_bar_tray_item_button_update(GtkWidget *button,
                                const BsBarTrayItemView *item,
                                int slot_size) {
-  BsBarTrayItemButtonState *state = NULL;
+  BsBarTrayItemButtonWidget *self = NULL;
   GtkWidget *content = NULL;
   GtkWidget *existing_child = NULL;
 
-  g_return_if_fail(button != NULL);
+  g_return_if_fail(BS_IS_BAR_TRAY_ITEM_BUTTON_WIDGET(button));
   g_return_if_fail(item != NULL);
 
-  state = g_object_get_data(G_OBJECT(button), BS_BAR_TRAY_ITEM_BUTTON_STATE_KEY);
-  g_return_if_fail(state != NULL);
+  self = BS_BAR_TRAY_ITEM_BUTTON_WIDGET(button);
+  self->slot_size = slot_size;
 
-  existing_child = gtk_button_get_child(GTK_BUTTON(button));
+  existing_child = gtk_button_get_child(GTK_BUTTON(self->button_child));
   if (existing_child != NULL) {
-    gtk_button_set_child(GTK_BUTTON(button), NULL);
+    gtk_button_set_child(GTK_BUTTON(self->button_child), NULL);
   }
 
   content = bs_bar_tray_item_button_build_content(item, slot_size);
-  bs_bar_tray_item_button_clear_affordance_classes(button);
-  bs_bar_tray_item_button_apply_affordance_classes(button, item);
-  gtk_button_set_child(GTK_BUTTON(button), content);
-  gtk_widget_set_size_request(button, slot_size, slot_size);
-  gtk_widget_set_tooltip_text(button,
+  bs_bar_tray_item_button_clear_affordance_classes(self->button_child);
+  bs_bar_tray_item_button_apply_affordance_classes(self->button_child, item);
+  gtk_button_set_child(GTK_BUTTON(self->button_child), content);
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self),
+                              item->title != NULL && *item->title != '\0' ? item->title : item->item_id);
+  gtk_widget_set_tooltip_text(self->button_child,
                               item->title != NULL && *item->title != '\0' ? item->title : item->item_id);
 
-  g_clear_pointer(&state->item_id, g_free);
-  state->item_id = g_strdup(item->item_id);
-  state->primary_action = item->primary_action;
-  state->has_context_menu = item->has_context_menu;
+  g_clear_pointer(&self->item_id, g_free);
+  self->item_id = g_strdup(item->item_id);
+  self->primary_action = item->primary_action;
+  self->has_context_menu = item->has_context_menu;
+  bs_bar_tray_item_button_apply_button_geometry(self);
 }
 
 const char *
 bs_bar_tray_item_button_item_id(GtkWidget *button) {
-  BsBarTrayItemButtonState *state = NULL;
+  BsBarTrayItemButtonWidget *self = NULL;
 
-  g_return_val_if_fail(button != NULL, NULL);
+  if (!BS_IS_BAR_TRAY_ITEM_BUTTON_WIDGET(button)) {
+    return NULL;
+  }
 
-  state = g_object_get_data(G_OBJECT(button), BS_BAR_TRAY_ITEM_BUTTON_STATE_KEY);
-  return state != NULL ? state->item_id : NULL;
+  self = BS_BAR_TRAY_ITEM_BUTTON_WIDGET(button);
+  return self->item_id;
+}
+
+gboolean
+bs_bar_tray_item_button_present_menu(GtkWidget *item_widget, GtkWidget *content) {
+  BsBarTrayItemButtonWidget *self = NULL;
+
+  if (!BS_IS_BAR_TRAY_ITEM_BUTTON_WIDGET(item_widget)) {
+    return FALSE;
+  }
+  g_return_val_if_fail(GTK_IS_WIDGET(content), FALSE);
+
+  self = BS_BAR_TRAY_ITEM_BUTTON_WIDGET(item_widget);
+  gtk_popover_set_child(self->popover, content);
+  gtk_popover_popup(self->popover);
+  gtk_popover_present(self->popover);
+  return TRUE;
+}
+
+void
+bs_bar_tray_item_button_close_menu(GtkWidget *item_widget) {
+  BsBarTrayItemButtonWidget *self = NULL;
+
+  if (!BS_IS_BAR_TRAY_ITEM_BUTTON_WIDGET(item_widget)) {
+    return;
+  }
+
+  self = BS_BAR_TRAY_ITEM_BUTTON_WIDGET(item_widget);
+  gtk_popover_popdown(self->popover);
+}
+
+gboolean
+bs_bar_tray_item_button_is_menu_open(GtkWidget *item_widget) {
+  BsBarTrayItemButtonWidget *self = NULL;
+
+  if (!BS_IS_BAR_TRAY_ITEM_BUTTON_WIDGET(item_widget)) {
+    return FALSE;
+  }
+
+  self = BS_BAR_TRAY_ITEM_BUTTON_WIDGET(item_widget);
+  return gtk_widget_get_visible(GTK_WIDGET(self->popover));
+}
+
+gboolean
+bs_bar_tray_item_button_get_anchor(GtkWidget *item_widget, int *out_x, int *out_y) {
+  BsBarTrayItemButtonWidget *self = NULL;
+  GtkNative *native = NULL;
+  GtkWidget *native_widget = NULL;
+  graphene_point_t src = GRAPHENE_POINT_INIT_ZERO;
+  graphene_point_t dest = GRAPHENE_POINT_INIT_ZERO;
+  GtkWidget *anchor_widget = NULL;
+
+  if (!BS_IS_BAR_TRAY_ITEM_BUTTON_WIDGET(item_widget)) {
+    return FALSE;
+  }
+  g_return_val_if_fail(out_x != NULL, FALSE);
+  g_return_val_if_fail(out_y != NULL, FALSE);
+
+  self = BS_BAR_TRAY_ITEM_BUTTON_WIDGET(item_widget);
+  anchor_widget = self->button_child != NULL ? self->button_child : item_widget;
+  native = gtk_widget_get_native(anchor_widget);
+  if (native == NULL) {
+    return FALSE;
+  }
+
+  native_widget = GTK_WIDGET(native);
+  src.x = (float) gtk_widget_get_width(anchor_widget) / 2.0f;
+  src.y = (float) gtk_widget_get_height(anchor_widget);
+  if (!gtk_widget_compute_point(anchor_widget, native_widget, &src, &dest)) {
+    return FALSE;
+  }
+
+  *out_x = (int) dest.x;
+  *out_y = (int) dest.y;
+  return TRUE;
 }

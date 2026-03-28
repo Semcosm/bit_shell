@@ -34,14 +34,9 @@ bs_bar_tray_strip_apply_metrics(GtkWidget *strip, int gap, int slot_size) {
   gtk_box_set_spacing(GTK_BOX(strip), gap);
   child = gtk_widget_get_first_child(strip);
   while (child != NULL) {
-    GtkWidget *content = NULL;
     GtkWidget *next = gtk_widget_get_next_sibling(child);
 
-    gtk_widget_set_size_request(child, slot_size, slot_size);
-    content = GTK_IS_BUTTON(child) ? gtk_button_get_child(GTK_BUTTON(child)) : child;
-    if (content != NULL) {
-      gtk_widget_set_size_request(content, slot_size, slot_size);
-    }
+    bs_bar_tray_item_button_apply_slot_size(child, slot_size);
     child = next;
   }
 }

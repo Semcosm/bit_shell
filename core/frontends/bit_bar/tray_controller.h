@@ -4,7 +4,6 @@
 #include <gtk/gtk.h>
 
 #include "frontends/bit_bar/bar_view_model.h"
-#include "frontends/bit_bar/tray_menu_bridge.h"
 
 typedef struct _BsBarTrayController BsBarTrayController;
 
@@ -15,15 +14,11 @@ typedef struct {
   void (*request_menu_activate)(const char *item_id, gint32 menu_item_id, gpointer user_data);
 
   GtkWidget *(*lookup_button)(const char *item_id, gpointer user_data);
-  gboolean (*resolve_popup_anchor)(GtkWidget *button,
-                                   BsBarPopupAnchor *out_anchor,
-                                   gpointer user_data);
 
   gpointer user_data;
 } BsBarTrayControllerOps;
 
-BsBarTrayController *bs_bar_tray_controller_new(GtkWidget *overlay_parent,
-                                                BsBarViewModel *view_model,
+BsBarTrayController *bs_bar_tray_controller_new(BsBarViewModel *view_model,
                                                 const BsBarTrayControllerOps *ops);
 void bs_bar_tray_controller_free(BsBarTrayController *controller);
 
