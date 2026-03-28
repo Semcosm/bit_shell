@@ -125,11 +125,16 @@ bit_bar_tray_menu_ux_test = executable(
   'bit_bar_tray_menu_ux_test',
   [
     'frontends/bit_bar/tray_menu_ux_test.c',
+    'frontends/bit_bar/bar_view_model.c',
     'frontends/bit_bar/tray_menu_view.c',
+    'model/config.c',
+    'model/ipc.c',
+    'model/snapshot.c',
     'model/tray_menu.c',
+    'state/state_store.c',
   ],
   include_directories: core_includes,
-  dependencies: [glib_dep, gtk4_dep],
+  dependencies: [glib_dep, gio_dep, json_glib_dep, gtk4_dep],
   install: false,
 )
 

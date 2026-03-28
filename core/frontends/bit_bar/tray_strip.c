@@ -47,6 +47,7 @@ bs_bar_tray_strip_rebuild(GtkWidget *strip,
                           int slot_size,
                           BsBarTrayItemActivateFn on_activate,
                           BsBarTrayItemMenuFn on_menu,
+                          BsBarTrayItemMenuClosedFn on_menu_closed,
                           gpointer user_data) {
   g_return_if_fail(strip != NULL);
 
@@ -63,7 +64,12 @@ bs_bar_tray_strip_rebuild(GtkWidget *strip,
       continue;
     }
 
-    button = bs_bar_tray_item_button_new(item, slot_size, on_activate, on_menu, user_data);
+    button = bs_bar_tray_item_button_new(item,
+                                         slot_size,
+                                         on_activate,
+                                         on_menu,
+                                         on_menu_closed,
+                                         user_data);
     gtk_box_append(GTK_BOX(strip), button);
   }
 }

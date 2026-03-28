@@ -124,6 +124,8 @@ static void bs_bar_app_tray_item_activate_bridge(GtkWidget *button,
 static void bs_bar_app_tray_item_menu_bridge(GtkWidget *button,
                                              const char *item_id,
                                              gpointer user_data);
+static void bs_bar_app_tray_item_menu_closed_bridge(const char *item_id,
+                                                    gpointer user_data);
 static void bs_bar_app_request_switch_workspace(BsBarApp *app, const char *workspace_id);
 static void bs_bar_app_request_focus_window(BsBarApp *app, const char *window_id);
 static void bs_bar_app_request_tray_activate(BsBarApp *app,
@@ -1406,7 +1408,13 @@ bs_bar_app_render_right_from_vm(BsBarApp *app) {
 
   items = bs_bar_view_model_tray_items(app->view_model);
   state = bs_bar_view_model_tray_state(app->view_model);
-  bs_bar_tray_strip_rebuild(app->tray_strip_box, NULL, app->metrics.tray_slot_size, NULL, NULL, NULL);
+  bs_bar_tray_strip_rebuild(app->tray_strip_box,
+                            NULL,
+                            app->metrics.tray_slot_size,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL);
 
   if (!bs_bar_view_model_show_tray(app->view_model)) {
     return;
@@ -1437,6 +1445,7 @@ bs_bar_app_render_right_from_vm(BsBarApp *app) {
                             app->metrics.tray_slot_size,
                             bs_bar_app_tray_item_activate_bridge,
                             bs_bar_app_tray_item_menu_bridge,
+                            bs_bar_app_tray_item_menu_closed_bridge,
                             app);
 }
 
@@ -1767,6 +1776,16 @@ bs_bar_app_tray_item_menu_bridge(GtkWidget *button,
   }
 
   bs_bar_tray_controller_handle_menu(app->tray_controller, button, item_id);
+}
+
+static void
+bs_bar_app_tray_item_menu_closed_bridge(const char *item_id, gpointer user_data) {
+  BsBarApp *app = user_data;
+
+  g_return_if_fail(app != NULL);
+  g_return_if_fail(item_id != NULL);
+
+  bs_bar_tray_controller_handle_item_menu_closed(app->tray_controller, item_id);
 }
 
 static void

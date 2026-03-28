@@ -7,7 +7,6 @@ struct _BsBarTrayController {
   BsBarViewModel *view_model;
   BsBarTrayControllerOps ops;
   char *open_item_id;
-  GWeakRef open_button_ref;
   char *pending_item_id;
   gboolean pending_open;
 };
@@ -16,15 +15,12 @@ static void bs_bar_tray_controller_set_pending_open(BsBarTrayController *control
                                                     const char *item_id);
 static void bs_bar_tray_controller_clear_pending_open(BsBarTrayController *controller);
 static void bs_bar_tray_controller_set_open_item(BsBarTrayController *controller,
-                                                 const char *item_id,
-                                                 GtkWidget *button);
+                                                 const char *item_id);
 static void bs_bar_tray_controller_clear_open_item(BsBarTrayController *controller);
 static GtkWidget *bs_bar_tray_controller_lookup_button(BsBarTrayController *controller,
                                                        const char *item_id);
-static GtkWidget *bs_bar_tray_controller_get_open_button(BsBarTrayController *controller);
 static gboolean bs_bar_tray_controller_get_item_anchor(GtkWidget *button, int *out_x, int *out_y);
 static gboolean bs_bar_tray_controller_get_menu_tree_ready(const BsTrayMenuTree *tree);
-static void bs_bar_tray_controller_sync_open_state(BsBarTrayController *controller);
 static void bs_bar_tray_controller_close_open_menu(BsBarTrayController *controller);
 static gboolean bs_bar_tray_controller_present_menu(BsBarTrayController *controller,
                                                     const char *item_id,
@@ -54,23 +50,18 @@ bs_bar_tray_controller_clear_pending_open(BsBarTrayController *controller) {
 }
 
 static void
-bs_bar_tray_controller_set_open_item(BsBarTrayController *controller,
-                                     const char *item_id,
-                                     GtkWidget *button) {
+bs_bar_tray_controller_set_open_item(BsBarTrayController *controller, const char *item_id) {
   g_return_if_fail(controller != NULL);
   g_return_if_fail(item_id != NULL);
-  g_return_if_fail(button != NULL);
 
   g_clear_pointer(&controller->open_item_id, g_free);
   controller->open_item_id = g_strdup(item_id);
-  g_weak_ref_set(&controller->open_button_ref, button);
 }
 
 static void
 bs_bar_tray_controller_clear_open_item(BsBarTrayController *controller) {
   g_return_if_fail(controller != NULL);
 
-  g_weak_ref_set(&controller->open_button_ref, NULL);
   g_clear_pointer(&controller->open_item_id, g_free);
 }
 
@@ -86,13 +77,6 @@ bs_bar_tray_controller_lookup_button(BsBarTrayController *controller, const char
   return controller->ops.lookup_button(item_id, controller->ops.user_data);
 }
 
-static GtkWidget *
-bs_bar_tray_controller_get_open_button(BsBarTrayController *controller) {
-  g_return_val_if_fail(controller != NULL, NULL);
-
-  return g_weak_ref_get(&controller->open_button_ref);
-}
-
 static gboolean
 bs_bar_tray_controller_get_item_anchor(GtkWidget *button, int *out_x, int *out_y) {
   g_return_val_if_fail(button != NULL, FALSE);
@@ -105,30 +89,6 @@ bs_bar_tray_controller_get_item_anchor(GtkWidget *button, int *out_x, int *out_y
 static gboolean
 bs_bar_tray_controller_get_menu_tree_ready(const BsTrayMenuTree *tree) {
   return bs_bar_tray_menu_tree_has_visible_entries(tree);
-}
-
-static void
-bs_bar_tray_controller_sync_open_state(BsBarTrayController *controller) {
-  g_autoptr(GtkWidget) open_button = NULL;
-  GtkWidget *button = NULL;
-
-  g_return_if_fail(controller != NULL);
-
-  if (controller->open_item_id == NULL) {
-    return;
-  }
-
-  open_button = bs_bar_tray_controller_get_open_button(controller);
-  button = bs_bar_tray_controller_lookup_button(controller, controller->open_item_id);
-  if (button == NULL) {
-    bs_bar_tray_controller_clear_open_item(controller);
-    return;
-  }
-  if (open_button != NULL
-      && button == open_button
-      && !bs_bar_tray_item_button_is_menu_open(button)) {
-    bs_bar_tray_controller_clear_open_item(controller);
-  }
 }
 
 static void
@@ -166,7 +126,6 @@ bs_bar_tray_controller_present_menu(BsBarTrayController *controller,
     return FALSE;
   }
 
-  bs_bar_tray_controller_sync_open_state(controller);
   if (controller->open_item_id != NULL && g_strcmp0(controller->open_item_id, item_id) != 0) {
     bs_bar_tray_controller_close_open_menu(controller);
   }
@@ -175,7 +134,7 @@ bs_bar_tray_controller_present_menu(BsBarTrayController *controller,
     return FALSE;
   }
 
-  bs_bar_tray_controller_set_open_item(controller, item_id, button);
+  bs_bar_tray_controller_set_open_item(controller, item_id);
   bs_bar_tray_controller_clear_pending_open(controller);
   return TRUE;
 }
@@ -214,7 +173,6 @@ bs_bar_tray_controller_new(BsBarViewModel *view_model, const BsBarTrayController
 
   controller = g_new0(BsBarTrayController, 1);
   controller->view_model = view_model;
-  g_weak_ref_init(&controller->open_button_ref, NULL);
   if (ops != NULL) {
     controller->ops = *ops;
   }
@@ -227,10 +185,7 @@ bs_bar_tray_controller_free(BsBarTrayController *controller) {
     return;
   }
 
-  bs_bar_tray_controller_close_open_menu(controller);
-  g_weak_ref_clear(&controller->open_button_ref);
-  g_clear_pointer(&controller->open_item_id, g_free);
-  g_clear_pointer(&controller->pending_item_id, g_free);
+  bs_bar_tray_controller_close(controller);
   g_free(controller);
 }
 
@@ -270,11 +225,10 @@ bs_bar_tray_controller_handle_menu(BsBarTrayController *controller,
   g_return_if_fail(button != NULL);
   g_return_if_fail(item_id != NULL);
 
-  bs_bar_tray_controller_sync_open_state(controller);
-  if (controller->open_item_id != NULL
-      && g_strcmp0(controller->open_item_id, item_id) == 0
-      && bs_bar_tray_item_button_is_menu_open(button)) {
-    bs_bar_tray_controller_close(controller);
+  if (controller->open_item_id != NULL && g_strcmp0(controller->open_item_id, item_id) == 0) {
+    bs_bar_tray_item_button_close_menu(button);
+    bs_bar_tray_controller_clear_open_item(controller);
+    bs_bar_tray_controller_clear_pending_open(controller);
     return;
   }
 
@@ -285,6 +239,7 @@ bs_bar_tray_controller_handle_menu(BsBarTrayController *controller,
                     && *item->menu_object_path != '\0';
 
   if (bs_bar_tray_controller_get_menu_tree_ready(tree)) {
+    bs_bar_tray_controller_clear_pending_open(controller);
     if (!bs_bar_tray_controller_present_menu(controller, item_id, button, tree)
         && controller->ops.request_context_menu != NULL) {
       if (!bs_bar_tray_controller_get_item_anchor(button, &anchor_x, &anchor_y)) {
@@ -319,23 +274,41 @@ bs_bar_tray_controller_handle_menu(BsBarTrayController *controller,
 }
 
 void
+bs_bar_tray_controller_handle_item_menu_closed(BsBarTrayController *controller, const char *item_id) {
+  g_return_if_fail(controller != NULL);
+  g_return_if_fail(item_id != NULL);
+
+  if (controller->open_item_id != NULL && g_strcmp0(controller->open_item_id, item_id) == 0) {
+    bs_bar_tray_controller_clear_open_item(controller);
+  }
+}
+
+void
 bs_bar_tray_controller_sync_from_vm(BsBarTrayController *controller) {
-  const BsBarTrayItemView *open_item = NULL;
-  const BsTrayMenuTree *open_tree = NULL;
+  const BsBarTrayItemView *item = NULL;
+  const BsTrayMenuTree *tree = NULL;
   GtkWidget *button = NULL;
 
   g_return_if_fail(controller != NULL);
 
-  bs_bar_tray_controller_sync_open_state(controller);
   if (controller->open_item_id != NULL) {
-    open_item = bs_bar_view_model_lookup_tray_item(controller->view_model, controller->open_item_id);
-    open_tree = bs_bar_view_model_lookup_tray_menu(controller->view_model, controller->open_item_id);
+    item = bs_bar_view_model_lookup_tray_item(controller->view_model, controller->open_item_id);
     button = bs_bar_tray_controller_lookup_button(controller, controller->open_item_id);
-    if (open_item == NULL
-        || button == NULL
-        || !bs_bar_tray_controller_get_menu_tree_ready(open_tree)
-        || !bs_bar_tray_controller_present_menu(controller, controller->open_item_id, button, open_tree)) {
-      bs_bar_tray_controller_close_open_menu(controller);
+    tree = bs_bar_view_model_lookup_tray_menu(controller->view_model, controller->open_item_id);
+    if (item == NULL || button == NULL) {
+      if (button != NULL) {
+        bs_bar_tray_item_button_close_menu(button);
+      }
+      bs_bar_tray_controller_clear_open_item(controller);
+    } else if (!bs_bar_tray_controller_get_menu_tree_ready(tree)) {
+      bs_bar_tray_item_button_close_menu(button);
+      bs_bar_tray_controller_clear_open_item(controller);
+    } else if (!bs_bar_tray_controller_present_menu(controller,
+                                                    controller->open_item_id,
+                                                    button,
+                                                    tree)) {
+      bs_bar_tray_item_button_close_menu(button);
+      bs_bar_tray_controller_clear_open_item(controller);
     }
   }
 
@@ -343,13 +316,14 @@ bs_bar_tray_controller_sync_from_vm(BsBarTrayController *controller) {
     return;
   }
 
-  if (bs_bar_view_model_lookup_tray_item(controller->view_model, controller->pending_item_id) == NULL) {
+  item = bs_bar_view_model_lookup_tray_item(controller->view_model, controller->pending_item_id);
+  if (item == NULL) {
     bs_bar_tray_controller_clear_pending_open(controller);
     return;
   }
 
-  open_tree = bs_bar_view_model_lookup_tray_menu(controller->view_model, controller->pending_item_id);
-  if (!bs_bar_tray_controller_get_menu_tree_ready(open_tree)) {
+  tree = bs_bar_view_model_lookup_tray_menu(controller->view_model, controller->pending_item_id);
+  if (!bs_bar_tray_controller_get_menu_tree_ready(tree)) {
     return;
   }
 
@@ -358,7 +332,7 @@ bs_bar_tray_controller_sync_from_vm(BsBarTrayController *controller) {
       || !bs_bar_tray_controller_present_menu(controller,
                                               controller->pending_item_id,
                                               button,
-                                              open_tree)) {
+                                              tree)) {
     bs_bar_tray_controller_clear_pending_open(controller);
   }
 }
@@ -374,6 +348,6 @@ void
 bs_bar_tray_controller_close(BsBarTrayController *controller) {
   g_return_if_fail(controller != NULL);
 
-  bs_bar_tray_controller_clear_pending_open(controller);
   bs_bar_tray_controller_close_open_menu(controller);
+  bs_bar_tray_controller_clear_pending_open(controller);
 }

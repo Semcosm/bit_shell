@@ -28,6 +28,8 @@ void bs_bar_tray_controller_handle_activate(BsBarTrayController *controller,
 void bs_bar_tray_controller_handle_menu(BsBarTrayController *controller,
                                         GtkWidget *button,
                                         const char *item_id);
+void bs_bar_tray_controller_handle_item_menu_closed(BsBarTrayController *controller,
+                                                    const char *item_id);
 void bs_bar_tray_controller_sync_from_vm(BsBarTrayController *controller);
 void bs_bar_tray_controller_handle_shell_reset(BsBarTrayController *controller);
 void bs_bar_tray_controller_close(BsBarTrayController *controller);

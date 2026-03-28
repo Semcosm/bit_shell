@@ -19,6 +19,7 @@ struct _BsBarTrayItemButtonWidget {
   int slot_size;
   BsBarTrayItemActivateFn on_activate;
   BsBarTrayItemMenuFn on_menu;
+  BsBarTrayItemMenuClosedFn on_menu_closed;
   gpointer user_data;
   GtkWidget *button_child;
   GtkPopover *popover;
@@ -52,6 +53,7 @@ static void bs_bar_tray_item_button_widget_snapshot(GtkWidget *widget, GtkSnapsh
 static void bs_bar_tray_item_button_widget_dispose(GObject *object);
 static void bs_bar_tray_item_button_widget_finalize(GObject *object);
 static void bs_bar_tray_item_button_apply_button_geometry(BsBarTrayItemButtonWidget *self);
+static void bs_bar_tray_item_button_on_popover_closed(GtkPopover *popover, gpointer user_data);
 static void bs_bar_tray_item_button_on_pressed(GtkGestureClick *gesture,
                                                gint n_press,
                                                gdouble x,
@@ -257,6 +259,21 @@ bs_bar_tray_item_button_apply_button_geometry(BsBarTrayItemButtonWidget *self) {
 }
 
 static void
+bs_bar_tray_item_button_on_popover_closed(GtkPopover *popover, gpointer user_data) {
+  BsBarTrayItemButtonWidget *self = user_data;
+
+  (void) popover;
+
+  g_return_if_fail(self != NULL);
+
+  if (self->item_id == NULL || *self->item_id == '\0' || self->on_menu_closed == NULL) {
+    return;
+  }
+
+  self->on_menu_closed(self->item_id, self->user_data);
+}
+
+static void
 bs_bar_tray_item_button_on_pressed(GtkGestureClick *gesture,
                                    gint n_press,
                                    gdouble x,
@@ -323,6 +340,10 @@ bs_bar_tray_item_button_widget_init(BsBarTrayItemButtonWidget *self) {
   gtk_popover_set_cascade_popdown(self->popover, true);
   gtk_popover_set_has_arrow(self->popover, false);
   gtk_widget_add_css_class(GTK_WIDGET(self->popover), "bit-bar-tray-menu-popover");
+  g_signal_connect(self->popover,
+                   "closed",
+                   G_CALLBACK(bs_bar_tray_item_button_on_popover_closed),
+                   self);
 
   gesture = gtk_gesture_click_new();
   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture), 0);
@@ -340,6 +361,7 @@ bs_bar_tray_item_button_new(const BsBarTrayItemView *item,
                             int slot_size,
                             BsBarTrayItemActivateFn on_activate,
                             BsBarTrayItemMenuFn on_menu,
+                            BsBarTrayItemMenuClosedFn on_menu_closed,
                             gpointer user_data) {
   BsBarTrayItemButtonWidget *self = NULL;
 
@@ -348,6 +370,7 @@ bs_bar_tray_item_button_new(const BsBarTrayItemView *item,
   self = g_object_new(bs_bar_tray_item_button_widget_get_type(), NULL);
   self->on_activate = on_activate;
   self->on_menu = on_menu;
+  self->on_menu_closed = on_menu_closed;
   self->user_data = user_data;
   bs_bar_tray_item_button_update(GTK_WIDGET(self), item, slot_size);
   return GTK_WIDGET(self);
@@ -424,6 +447,9 @@ bs_bar_tray_item_button_present_menu(GtkWidget *item_widget, GtkWidget *content)
   g_return_val_if_fail(GTK_IS_WIDGET(content), FALSE);
 
   self = BS_BAR_TRAY_ITEM_BUTTON_WIDGET(item_widget);
+  if (gtk_popover_get_child(self->popover) != NULL) {
+    gtk_popover_set_child(self->popover, NULL);
+  }
   gtk_popover_set_child(self->popover, content);
   gtk_popover_popup(self->popover);
   gtk_popover_present(self->popover);
