@@ -34,6 +34,9 @@ static BsBarTrayMenuSizeConstraints bs_bar_tray_menu_compute_constraints_for_geo
 static GtkWidget *bs_bar_tray_controller_lookup_button(BsBarTrayController *controller,
                                                        const char *item_id);
 static gboolean bs_bar_tray_controller_get_item_anchor(GtkWidget *button, int *out_x, int *out_y);
+static gboolean bs_bar_tray_controller_get_surface_transform(GtkNative *native,
+                                                             double *out_x,
+                                                             double *out_y);
 static gboolean bs_bar_tray_controller_get_menu_tree_ready(const BsTrayMenuTree *tree);
 static gboolean bs_bar_tray_controller_compute_menu_constraints(GtkWidget *button,
                                                                 BsBarTrayMenuSizeConstraints *out);
@@ -132,6 +135,18 @@ bs_bar_tray_controller_get_item_anchor(GtkWidget *button, int *out_x, int *out_y
 }
 
 static gboolean
+bs_bar_tray_controller_get_surface_transform(GtkNative *native, double *out_x, double *out_y) {
+  g_return_val_if_fail(native != NULL, FALSE);
+  g_return_val_if_fail(out_x != NULL, FALSE);
+  g_return_val_if_fail(out_y != NULL, FALSE);
+
+  *out_x = 0.0;
+  *out_y = 0.0;
+  gtk_native_get_surface_transform(native, out_x, out_y);
+  return TRUE;
+}
+
+static gboolean
 bs_bar_tray_controller_get_menu_tree_ready(const BsTrayMenuTree *tree) {
   return bs_bar_tray_menu_tree_has_visible_entries(tree);
 }
@@ -144,6 +159,7 @@ bs_bar_tray_controller_compute_menu_constraints(GtkWidget *button,
   GdkDisplay *display = NULL;
   GdkMonitor *monitor = NULL;
   GdkRectangle geometry = {0};
+  double surface_x = 0.0;
   double surface_y = 0.0;
   int anchor_x = 0;
   int anchor_y = 0;
@@ -178,7 +194,10 @@ bs_bar_tray_controller_compute_menu_constraints(GtkWidget *button,
   }
 
   gdk_monitor_get_geometry(monitor, &geometry);
-  gtk_native_get_surface_transform(native, NULL, &surface_y);
+  if (!bs_bar_tray_controller_get_surface_transform(native, &surface_x, &surface_y)) {
+    return FALSE;
+  }
+  (void) surface_x;
   monitor_anchor_y = anchor_y + (int) surface_y;
   *out = bs_bar_tray_menu_compute_constraints_for_geometry(geometry.width,
                                                            geometry.height,
