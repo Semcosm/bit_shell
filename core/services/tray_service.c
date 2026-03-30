@@ -1,5 +1,7 @@
 #include "services/tray_service.h"
 
+#include "common/utf8.h"
+
 #include <glib.h>
 #include <string.h>
 
@@ -85,7 +87,10 @@ static bool bs_tray_service_refresh_registration(BsTrayRegistration *registratio
 static char *bs_tray_service_build_item_id(const char *bus_name, const char *object_path);
 static void bs_tray_service_pixmap_free(gpointer data);
 static GPtrArray *bs_tray_service_dup_proxy_pixmaps(GDBusProxy *proxy, const char *property_name);
-static char *bs_tray_service_dup_proxy_string(GDBusProxy *proxy, const char *property_name);
+static char *bs_tray_service_dup_variant_text(GVariant *value);
+static char *bs_tray_service_dup_variant_object_path(GVariant *value);
+static char *bs_tray_service_dup_proxy_text(GDBusProxy *proxy, const char *property_name);
+static char *bs_tray_service_dup_proxy_object_path(GDBusProxy *proxy, const char *property_name);
 static bool bs_tray_service_capability_projects_true(BsTrayCapabilityState capability);
 static bool bs_tray_service_set_capability(BsTrayCapabilityState *slot,
                                            BsTrayCapabilityState next_state);
@@ -273,13 +278,21 @@ bs_tray_service_dup_proxy_pixmaps(GDBusProxy *proxy, const char *property_name) 
 }
 
 static char *
-bs_tray_service_dup_proxy_string(GDBusProxy *proxy, const char *property_name) {
-  g_autoptr(GVariant) value = NULL;
+bs_tray_service_dup_variant_text(GVariant *value) {
+  g_autofree char *raw = NULL;
 
-  g_return_val_if_fail(proxy != NULL, NULL);
-  g_return_val_if_fail(property_name != NULL, NULL);
+  if (value == NULL || !g_variant_is_of_type(value, G_VARIANT_TYPE_STRING)) {
+    return NULL;
+  }
 
-  value = g_dbus_proxy_get_cached_property(proxy, property_name);
+  raw = g_variant_dup_string(value, NULL);
+  return bs_utf8_dup_valid_or_null(raw);
+}
+
+static char *
+bs_tray_service_dup_variant_object_path(GVariant *value) {
+  g_autofree char *raw = NULL;
+
   if (value == NULL) {
     return NULL;
   }
@@ -288,7 +301,34 @@ bs_tray_service_dup_proxy_string(GDBusProxy *proxy, const char *property_name) {
     return NULL;
   }
 
-  return g_variant_dup_string(value, NULL);
+  raw = g_variant_dup_string(value, NULL);
+  if (raw == NULL || !g_variant_is_object_path(raw)) {
+    return NULL;
+  }
+
+  return g_strdup(raw);
+}
+
+static char *
+bs_tray_service_dup_proxy_text(GDBusProxy *proxy, const char *property_name) {
+  g_autoptr(GVariant) value = NULL;
+
+  g_return_val_if_fail(proxy != NULL, NULL);
+  g_return_val_if_fail(property_name != NULL, NULL);
+
+  value = g_dbus_proxy_get_cached_property(proxy, property_name);
+  return bs_tray_service_dup_variant_text(value);
+}
+
+static char *
+bs_tray_service_dup_proxy_object_path(GDBusProxy *proxy, const char *property_name) {
+  g_autoptr(GVariant) value = NULL;
+
+  g_return_val_if_fail(proxy != NULL, NULL);
+  g_return_val_if_fail(property_name != NULL, NULL);
+
+  value = g_dbus_proxy_get_cached_property(proxy, property_name);
+  return bs_tray_service_dup_variant_object_path(value);
 }
 
 static bool
@@ -367,7 +407,7 @@ bs_tray_service_get_proxy_status(GDBusProxy *proxy) {
 
   g_return_val_if_fail(proxy != NULL, BS_TRAY_ITEM_STATUS_PASSIVE);
 
-  status = bs_tray_service_dup_proxy_string(proxy, "Status");
+  status = bs_tray_service_dup_proxy_text(proxy, "Status");
   if (g_strcmp0(status, "Active") == 0) {
     return BS_TRAY_ITEM_STATUS_ACTIVE;
   }
@@ -557,13 +597,13 @@ bs_tray_service_refresh_registration(BsTrayRegistration *registration, GError **
   item.item_id = g_strdup(registration->item_id);
   item.bus_name = g_strdup(registration->bus_name);
   item.object_path = g_strdup(registration->object_path);
-  item.menu_object_path = bs_tray_service_dup_proxy_string(registration->item_proxy, "Menu");
-  item.id = bs_tray_service_dup_proxy_string(registration->item_proxy, "Id");
-  item.title = bs_tray_service_dup_proxy_string(registration->item_proxy, "Title");
-  item.icon_name = bs_tray_service_dup_proxy_string(registration->item_proxy, "IconName");
+  item.menu_object_path = bs_tray_service_dup_proxy_object_path(registration->item_proxy, "Menu");
+  item.id = bs_tray_service_dup_proxy_text(registration->item_proxy, "Id");
+  item.title = bs_tray_service_dup_proxy_text(registration->item_proxy, "Title");
+  item.icon_name = bs_tray_service_dup_proxy_text(registration->item_proxy, "IconName");
   item.icon_pixmaps = bs_tray_service_dup_proxy_pixmaps(registration->item_proxy, "IconPixmap");
-  item.attention_icon_name = bs_tray_service_dup_proxy_string(registration->item_proxy,
-                                                              "AttentionIconName");
+  item.attention_icon_name = bs_tray_service_dup_proxy_text(registration->item_proxy,
+                                                            "AttentionIconName");
   item.attention_icon_pixmaps =
     bs_tray_service_dup_proxy_pixmaps(registration->item_proxy, "AttentionIconPixmap");
   item.status = bs_tray_service_get_proxy_status(registration->item_proxy);

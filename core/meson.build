@@ -17,6 +17,7 @@ configure_file(
 core_includes = include_directories('.')
 
 bit_shelld_sources = files(
+  'common/utf8.c',
   'model/ipc.c',
   'model/config.c',
   'model/snapshot.c',
@@ -154,3 +155,21 @@ bit_dock_widget_lifecycle_test = executable(
 )
 
 test('bit_dock_widget_lifecycle', bit_dock_widget_lifecycle_test)
+
+tray_utf8_ingress_test = executable(
+  'tray_utf8_ingress_test',
+  [
+    'services/tray_utf8_ingress_test.c',
+    'common/utf8.c',
+    'model/config.c',
+    'model/ipc.c',
+    'model/snapshot.c',
+    'model/tray_menu.c',
+    'state/state_store.c',
+  ],
+  include_directories: core_includes,
+  dependencies: [glib_dep, gio_dep, gio_unix_dep],
+  install: false,
+)
+
+test('tray_utf8_ingress', tray_utf8_ingress_test)

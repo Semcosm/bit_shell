@@ -1,5 +1,7 @@
 #include "services/tray_menu_service.h"
 
+#include "common/utf8.h"
+
 #include <string.h>
 
 #define BS_DBUSMENU_INTERFACE "com.canonical.dbusmenu"
@@ -24,6 +26,7 @@ static BsTrayMenuRegistration *bs_tray_menu_service_lookup_registration(BsTrayMe
                                                                         const char *item_id);
 static gboolean bs_tray_menu_service_call_about_to_show(BsTrayMenuRegistration *registration,
                                                         gint32 menu_item_id);
+static char *bs_tray_menu_service_dup_variant_text(GVariant *value);
 static BsTrayMenuNode *bs_tray_menu_service_parse_layout_node(GVariant *value);
 static bool bs_tray_menu_service_refresh_registration(BsTrayMenuRegistration *registration,
                                                       GError **error);
@@ -80,6 +83,18 @@ bs_tray_menu_service_call_about_to_show(BsTrayMenuRegistration *registration, gi
   return TRUE;
 }
 
+static char *
+bs_tray_menu_service_dup_variant_text(GVariant *value) {
+  g_autofree char *raw = NULL;
+
+  if (value == NULL || !g_variant_is_of_type(value, G_VARIANT_TYPE_STRING)) {
+    return NULL;
+  }
+
+  raw = g_variant_dup_string(value, NULL);
+  return bs_utf8_dup_valid_or_null(raw);
+}
+
 static BsTrayMenuNode *
 bs_tray_menu_service_parse_layout_node(GVariant *value) {
   g_autoptr(GVariant) id_value = NULL;
@@ -126,20 +141,20 @@ bs_tray_menu_service_parse_layout_node(GVariant *value) {
     g_variant_get(child, "{&sv}", &key, &child_value);
     if (g_strcmp0(key, "label") == 0) {
       g_free(node->label);
-      node->label = g_variant_dup_string(child_value, NULL);
+      node->label = bs_tray_menu_service_dup_variant_text(child_value);
     } else if (g_strcmp0(key, "icon-name") == 0) {
       g_free(node->icon_name);
-      node->icon_name = g_variant_dup_string(child_value, NULL);
+      node->icon_name = bs_tray_menu_service_dup_variant_text(child_value);
     } else if (g_strcmp0(key, "visible") == 0) {
       node->visible = g_variant_get_boolean(child_value);
     } else if (g_strcmp0(key, "enabled") == 0) {
       node->enabled = g_variant_get_boolean(child_value);
     } else if (g_strcmp0(key, "type") == 0) {
-      item_type = g_variant_dup_string(child_value, NULL);
+      item_type = bs_tray_menu_service_dup_variant_text(child_value);
     } else if (g_strcmp0(key, "children-display") == 0) {
-      children_display = g_variant_dup_string(child_value, NULL);
+      children_display = bs_tray_menu_service_dup_variant_text(child_value);
     } else if (g_strcmp0(key, "toggle-type") == 0) {
-      toggle_type = g_variant_dup_string(child_value, NULL);
+      toggle_type = bs_tray_menu_service_dup_variant_text(child_value);
     } else if (g_strcmp0(key, "toggle-state") == 0) {
       node->checked = g_variant_get_int32(child_value) != 0;
     }
