@@ -63,6 +63,7 @@ executable(
 )
 
 bit_bar_sources = files(
+  'common/utf8.c',
   'model/config.c',
   'model/ipc.c',
   'model/tray_menu.c',
@@ -108,6 +109,7 @@ bit_bar_tray_menu_roundtrip_test = executable(
   'bit_bar_tray_menu_roundtrip_test',
   [
     'frontends/bit_bar/tray_menu_roundtrip_test.c',
+    'common/utf8.c',
     'frontends/bit_bar/bar_view_model.c',
     'model/config.c',
     'model/ipc.c',
@@ -126,6 +128,7 @@ bit_bar_tray_menu_ux_test = executable(
   'bit_bar_tray_menu_ux_test',
   [
     'frontends/bit_bar/tray_menu_ux_test.c',
+    'common/utf8.c',
     'frontends/bit_bar/bar_view_model.c',
     'frontends/bit_bar/tray_menu_view.c',
     'model/config.c',
@@ -140,6 +143,22 @@ bit_bar_tray_menu_ux_test = executable(
 )
 
 test('bit_bar_tray_menu_ux', bit_bar_tray_menu_ux_test)
+
+bit_bar_tray_text_utf8_test = executable(
+  'bit_bar_tray_text_utf8_test',
+  [
+    'frontends/bit_bar/tray_text_utf8_test.c',
+    'common/utf8.c',
+    'model/config.c',
+    'model/ipc.c',
+    'model/tray_menu.c',
+  ],
+  include_directories: core_includes,
+  dependencies: [glib_dep, gio_dep, json_glib_dep, gtk4_dep],
+  install: false,
+)
+
+test('bit_bar_tray_text_utf8', bit_bar_tray_text_utf8_test)
 
 bit_dock_widget_lifecycle_test = executable(
   'bit_dock_widget_lifecycle_test',

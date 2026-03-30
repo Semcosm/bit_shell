@@ -1,5 +1,7 @@
 #include "frontends/bit_bar/tray_menu_view.h"
 
+#include "common/utf8.h"
+
 #define BS_BAR_TRAY_MENU_DEFAULT_MIN_WIDTH 220
 #define BS_BAR_TRAY_MENU_DEFAULT_MAX_WIDTH 640
 #define BS_BAR_TRAY_MENU_DEFAULT_MAX_HEIGHT 480
@@ -47,6 +49,7 @@ static gboolean bs_bar_tray_menu_children_have_visible_entries(GPtrArray *childr
 static const BsTrayMenuNode *bs_bar_tray_menu_view_current_node(BsBarTrayMenuView *view);
 static BsBarTrayMenuLevel *bs_bar_tray_menu_view_current_level(BsBarTrayMenuView *view);
 static char *bs_bar_tray_menu_view_strip_label(const BsTrayMenuNode *node);
+static char *bs_bar_tray_menu_view_dup_safe_label_text(const BsTrayMenuNode *node);
 static gboolean bs_bar_tray_menu_view_node_opens_submenu(const BsTrayMenuNode *node);
 static gboolean bs_bar_tray_menu_view_node_is_interactive(const BsTrayMenuNode *node);
 static void bs_bar_tray_menu_view_normalize_constraints(BsBarTrayMenuSizeConstraints *constraints);
@@ -174,6 +177,16 @@ bs_bar_tray_menu_view_strip_label(const BsTrayMenuNode *node) {
   return g_string_free(label, FALSE);
 }
 
+static char *
+bs_bar_tray_menu_view_dup_safe_label_text(const BsTrayMenuNode *node) {
+  g_autofree char *display_label = NULL;
+
+  g_return_val_if_fail(node != NULL, g_strdup(""));
+
+  display_label = bs_bar_tray_menu_view_strip_label(node);
+  return bs_utf8_dup_valid_or_null(display_label != NULL ? display_label : "");
+}
+
 static gboolean
 bs_bar_tray_menu_view_node_opens_submenu(const BsTrayMenuNode *node) {
   g_return_val_if_fail(node != NULL, FALSE);
@@ -237,7 +250,7 @@ bs_bar_tray_menu_view_build_row(BsBarTrayMenuView *view,
   label = gtk_label_new(NULL);
   affordance = gtk_label_new(" ");
   row_data = g_new0(BsBarTrayMenuRowData, 1);
-  display_label = bs_bar_tray_menu_view_strip_label(node);
+  display_label = bs_bar_tray_menu_view_dup_safe_label_text(node);
 
   row_data->view = view;
   row_data->node = node;
@@ -274,7 +287,7 @@ bs_bar_tray_menu_view_build_row(BsBarTrayMenuView *view,
   gtk_label_set_wrap_mode(GTK_LABEL(label), PANGO_WRAP_WORD_CHAR);
   gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_NONE);
   gtk_label_set_single_line_mode(GTK_LABEL(label), FALSE);
-  gtk_label_set_text(GTK_LABEL(label), display_label);
+  gtk_label_set_text(GTK_LABEL(label), display_label != NULL ? display_label : "");
 
   if (node->kind == BS_TRAY_MENU_ITEM_CHECK) {
     gtk_label_set_text(GTK_LABEL(indicator), node->checked ? "[x]" : "[ ]");
@@ -478,8 +491,8 @@ bs_bar_tray_menu_view_rebuild(BsBarTrayMenuView *view) {
   gtk_widget_set_visible(view->header, view->navigation->len > 1);
 
   if (current != NULL && current->label != NULL && *current->label != '\0') {
-    g_autofree char *title = bs_bar_tray_menu_view_strip_label(current);
-    gtk_label_set_text(GTK_LABEL(view->title_label), title);
+    g_autofree char *title = bs_bar_tray_menu_view_dup_safe_label_text(current);
+    gtk_label_set_text(GTK_LABEL(view->title_label), title != NULL ? title : "");
   } else {
     gtk_label_set_text(GTK_LABEL(view->title_label), "Menu");
   }

@@ -1,5 +1,7 @@
 #include "frontends/bit_bar/bar_view_model.h"
 
+#include "common/utf8.h"
+
 #include <json-glib/json-glib.h>
 
 #include "model/ipc.h"
@@ -100,6 +102,8 @@ static bool bs_bar_vm_json_bool_member(JsonObject *object, const char *member_na
 static int bs_bar_vm_json_int_member(JsonObject *object, const char *member_name, int fallback);
 static guint64 bs_bar_vm_json_uint64_member(JsonObject *object, const char *member_name, guint64 fallback);
 static GPtrArray *bs_bar_vm_json_tray_pixmaps_member(JsonObject *object, const char *member_name);
+static char *bs_bar_vm_dup_valid_text(const char *value);
+static char *bs_bar_vm_dup_valid_object_path_or_null(const char *value);
 static void bs_bar_view_model_parse_shell(BsBarViewModel *vm, JsonObject *object);
 static void bs_bar_view_model_parse_windows(BsBarViewModel *vm, JsonObject *object);
 static void bs_bar_view_model_parse_workspaces(BsBarViewModel *vm, JsonObject *object);
@@ -441,6 +445,24 @@ bs_bar_vm_json_tray_pixmaps_member(JsonObject *object, const char *member_name) 
   return pixmaps;
 }
 
+static char *
+bs_bar_vm_dup_valid_text(const char *value) {
+  return bs_utf8_dup_valid_or_null(value);
+}
+
+static char *
+bs_bar_vm_dup_valid_object_path_or_null(const char *value) {
+  if (value == NULL || *value == '\0') {
+    return NULL;
+  }
+
+  if (!g_variant_is_object_path(value)) {
+    return NULL;
+  }
+
+  return g_strdup(value);
+}
+
 static void
 bs_bar_view_model_parse_shell(BsBarViewModel *vm, JsonObject *object) {
   g_return_if_fail(vm != NULL);
@@ -597,16 +619,17 @@ bs_bar_view_model_parse_tray(BsBarViewModel *vm, JsonObject *object) {
     }
 
     tray_item = g_new0(BsBarVmTrayItem, 1);
-    tray_item->item_id = g_strdup(item_id);
-    tray_item->title = g_strdup(bs_bar_vm_json_string_member(item, "title"));
-    tray_item->icon_name = g_strdup(bs_bar_vm_json_string_member(item, "icon_name"));
+    tray_item->item_id = bs_bar_vm_dup_valid_text(item_id);
+    tray_item->title = bs_bar_vm_dup_valid_text(bs_bar_vm_json_string_member(item, "title"));
+    tray_item->icon_name = bs_bar_vm_dup_valid_text(bs_bar_vm_json_string_member(item, "icon_name"));
     tray_item->icon_pixmaps = bs_bar_vm_json_tray_pixmaps_member(item, "icon_pixmaps");
-    tray_item->attention_icon_name = g_strdup(bs_bar_vm_json_string_member(item,
-                                                                           "attention_icon_name"));
+    tray_item->attention_icon_name = bs_bar_vm_dup_valid_text(bs_bar_vm_json_string_member(item,
+                                                                                           "attention_icon_name"));
     tray_item->attention_icon_pixmaps = bs_bar_vm_json_tray_pixmaps_member(item,
                                                                            "attention_icon_pixmaps");
-    tray_item->status = g_strdup(bs_bar_vm_json_string_member(item, "status"));
-    tray_item->menu_object_path = g_strdup(bs_bar_vm_json_string_member(item, "menu_object_path"));
+    tray_item->status = bs_bar_vm_dup_valid_text(bs_bar_vm_json_string_member(item, "status"));
+    tray_item->menu_object_path =
+      bs_bar_vm_dup_valid_object_path_or_null(bs_bar_vm_json_string_member(item, "menu_object_path"));
     tray_item->presentation_seq = bs_bar_vm_json_uint64_member(item, "presentation_seq", 0);
     tray_item->item_is_menu = bs_bar_vm_json_bool_member(item, "item_is_menu", false);
     tray_item->has_activate = bs_bar_vm_json_bool_member(item, "has_activate", false);
@@ -642,7 +665,7 @@ bs_bar_view_model_parse_tray_menu(BsBarViewModel *vm, JsonObject *object) {
     }
 
     tree = g_new0(BsTrayMenuTree, 1);
-    tree->item_id = g_strdup(item_id);
+    tree->item_id = bs_bar_vm_dup_valid_text(item_id);
     tree->revision = (guint32) bs_bar_vm_json_int_member(item, "revision", 0);
     tree->root = bs_bar_vm_parse_tray_menu_node(json_object_has_member(item, "root")
                                                   ? json_object_get_object_member(item, "root")
@@ -722,8 +745,8 @@ bs_bar_vm_parse_tray_menu_node(JsonObject *object) {
   node = g_new0(BsTrayMenuNode, 1);
   node->id = (gint32) bs_bar_vm_json_int_member(object, "id", 0);
   node->kind = bs_bar_vm_parse_tray_menu_kind(bs_bar_vm_json_string_member(object, "kind"));
-  node->label = g_strdup(bs_bar_vm_json_string_member(object, "label"));
-  node->icon_name = g_strdup(bs_bar_vm_json_string_member(object, "icon_name"));
+  node->label = bs_bar_vm_dup_valid_text(bs_bar_vm_json_string_member(object, "label"));
+  node->icon_name = bs_bar_vm_dup_valid_text(bs_bar_vm_json_string_member(object, "icon_name"));
   node->visible = bs_bar_vm_json_bool_member(object, "visible", true);
   node->enabled = bs_bar_vm_json_bool_member(object, "enabled", true);
   node->checked = bs_bar_vm_json_bool_member(object, "checked", false);
