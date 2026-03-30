@@ -50,6 +50,7 @@ typedef struct {
   GtkWidget *slot;
   GtkWidget *content_box;
   GtkWidget *button;
+  GtkWidget *content_stack;
   GtkWidget *indicator;
   GtkWidget *icon_image;
   GtkWidget *label;
@@ -108,6 +109,7 @@ static void bs_dock_item_action_data_free(gpointer data);
 static void bs_dock_item_widgets_free(gpointer data);
 static void bs_dock_app_set_status(BsDockApp *app, const char *message);
 static void bs_dock_app_update_action_data(BsDockItemActionData *action, const BsDockItemView *item);
+static void bs_dock_item_widgets_set_visual_mode(BsDockItemWidgets *widgets, bool show_icon);
 static BsDockItemWidgets *bs_dock_app_create_item_widgets(BsDockApp *app, const BsDockItemView *item);
 static void bs_dock_app_update_item_widgets(BsDockApp *app,
                                             BsDockItemWidgets *widgets,
@@ -317,7 +319,24 @@ bs_dock_item_widgets_free(gpointer data) {
   g_free(widgets->content_css_name);
   g_free(widgets->button_css_name);
   bs_dock_item_action_data_free(widgets->action);
+  widgets->slot = NULL;
+  widgets->content_box = NULL;
+  widgets->button = NULL;
+  widgets->content_stack = NULL;
+  widgets->indicator = NULL;
+  widgets->icon_image = NULL;
+  widgets->label = NULL;
+  widgets->action = NULL;
   g_free(widgets);
+}
+
+static void
+bs_dock_item_widgets_set_visual_mode(BsDockItemWidgets *widgets, bool show_icon) {
+  g_return_if_fail(widgets != NULL);
+  g_return_if_fail(GTK_IS_STACK(widgets->content_stack));
+
+  gtk_stack_set_visible_child_name(GTK_STACK(widgets->content_stack),
+                                   show_icon ? "icon" : "label");
 }
 
 static void
@@ -559,6 +578,9 @@ static void
 bs_dock_app_apply_layout(BsDockApp *app, BsDockItemWidgets *widgets) {
   g_return_if_fail(app != NULL);
   g_return_if_fail(widgets != NULL);
+  g_return_if_fail(GTK_IS_STACK(widgets->content_stack));
+  g_return_if_fail(GTK_IS_IMAGE(widgets->icon_image));
+  g_return_if_fail(GTK_IS_LABEL(widgets->label));
 
   gtk_widget_set_size_request(widgets->slot,
                               widgets->slot_width_px > 0.0
@@ -1054,6 +1076,10 @@ bs_dock_app_create_item_widgets(BsDockApp *app, const BsDockItemView *item) {
   widgets->button_css_name = g_strdup_printf("dock-item-%u", app->next_slot_css_id);
   gtk_widget_set_name(widgets->button, widgets->button_css_name);
 
+  widgets->content_stack = gtk_stack_new();
+  gtk_stack_set_transition_type(GTK_STACK(widgets->content_stack), GTK_STACK_TRANSITION_TYPE_NONE);
+  gtk_widget_set_halign(widgets->content_stack, GTK_ALIGN_CENTER);
+
   widgets->icon_image = gtk_image_new();
   gtk_widget_add_css_class(widgets->icon_image, "dock-item-icon");
 
@@ -1063,7 +1089,10 @@ bs_dock_app_create_item_widgets(BsDockApp *app, const BsDockItemView *item) {
   gtk_label_set_wrap_mode(GTK_LABEL(widgets->label), PANGO_WRAP_WORD_CHAR);
   gtk_label_set_justify(GTK_LABEL(widgets->label), GTK_JUSTIFY_CENTER);
   gtk_label_set_max_width_chars(GTK_LABEL(widgets->label), 6);
-  gtk_button_set_child(GTK_BUTTON(widgets->button), widgets->icon_image);
+  gtk_stack_add_named(GTK_STACK(widgets->content_stack), widgets->icon_image, "icon");
+  gtk_stack_add_named(GTK_STACK(widgets->content_stack), widgets->label, "label");
+  bs_dock_item_widgets_set_visual_mode(widgets, true);
+  gtk_button_set_child(GTK_BUTTON(widgets->button), widgets->content_stack);
 
   widgets->indicator = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   gtk_widget_add_css_class(widgets->indicator, "dock-indicator");
@@ -1136,15 +1165,11 @@ bs_dock_app_update_item_widgets(BsDockApp *app,
   gtk_widget_set_tooltip_text(widgets->button, item->name != NULL ? item->name : item->app_key);
   if (item->icon_name != NULL && *item->icon_name != '\0') {
     gtk_image_set_from_icon_name(GTK_IMAGE(widgets->icon_image), item->icon_name);
-    if (gtk_button_get_child(GTK_BUTTON(widgets->button)) != widgets->icon_image) {
-      gtk_button_set_child(GTK_BUTTON(widgets->button), widgets->icon_image);
-    }
+    bs_dock_item_widgets_set_visual_mode(widgets, true);
   } else {
     gtk_label_set_text(GTK_LABEL(widgets->label),
                        item->name != NULL ? item->name : item->app_key);
-    if (gtk_button_get_child(GTK_BUTTON(widgets->button)) != widgets->label) {
-      gtk_button_set_child(GTK_BUTTON(widgets->button), widgets->label);
-    }
+    bs_dock_item_widgets_set_visual_mode(widgets, false);
   }
 
   gtk_widget_set_size_request(widgets->indicator,

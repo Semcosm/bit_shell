@@ -139,3 +139,18 @@ bit_bar_tray_menu_ux_test = executable(
 )
 
 test('bit_bar_tray_menu_ux', bit_bar_tray_menu_ux_test)
+
+bit_dock_widget_lifecycle_test = executable(
+  'bit_dock_widget_lifecycle_test',
+  [
+    'frontends/bit_dock/dock_app_widget_lifecycle_test.c',
+    'frontends/bit_dock/dock_layout.c',
+    'frontends/common/ipc_client.c',
+    'model/config.c',
+  ],
+  include_directories: core_includes,
+  dependencies: [glib_dep, gio_dep, gio_unix_dep, json_glib_dep, gtk4_dep, gtk4_layer_shell_dep, math_dep],
+  install: false,
+)
+
+test('bit_dock_widget_lifecycle', bit_dock_widget_lifecycle_test)
