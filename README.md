@@ -1,6 +1,6 @@
 # bit_shell
 
-`bit_shell` 是一个围绕 niri 构建的桌面 shell 项目。它不替代 compositor，而是在 niri 之上提供 shell 级能力，包括状态归并、本地 IPC、程序坞前端，以及后续的顶部栏和启动台。
+`bit_shell` 是一个围绕 niri 构建的桌面 shell 项目。它不替代 compositor，而是在 niri 之上提供 shell 级能力，包括状态归并、本地 IPC、程序坞前端、顶部栏，以及后续的启动台。
 
 当前仓库以 C17 + GLib/GIO + GTK4 实现，使用 Meson 构建。
 
@@ -8,9 +8,10 @@
 
 整体结构分成一个后台守护进程和多个前端：
 
-- `bit_shelld`：唯一状态源，负责 niri IPC/event-stream、状态树、应用聚合、配置/状态持久化、本地 IPC 与命令路由
-- `bit_dock`：底部程序坞前端，负责 pinned/running 应用展示、启动/激活、多窗口切换与交互动画
-- `bit_bar`、`bit_launchpad`：设计已进入文档，但当前仓库主要已落地 `bit_shelld` 与 `bit_dock`
+- `bit_shelld`：唯一状态源，负责 niri IPC/event-stream、状态树、tray / tray_menu / settings 等 runtime services、本地 IPC 与命令路由
+- `bit_dock`：底部程序坞前端，负责 pinned/running 应用展示、启动/激活、多窗口切换与交互动画，当前已补齐 item widget lifecycle 回归测试
+- `bit_bar`：顶部栏前端，当前主干已覆盖 workspace / title / tray / clock 等运行时能力；tray 本地菜单、生命周期、尺寸约束与 UTF-8 处理已进入主干
+- `bit_launchpad`：仍以后续实现为主
 - 前端共享一层轻量 Unix-socket IPC client，负责长连接、单行 JSON 收发与断线重连；业务 topic 解析仍留在各自前端内
 
 核心原则：
@@ -32,6 +33,7 @@ bit_shell/
 │  ├─ state/         # StateStore 与 topic 版本推进
 │  ├─ niri/          # niri 后端接入
 │  └─ frontends/
+│     ├─ bit_bar/    # GTK4 bar 前端
 │     └─ bit_dock/   # GTK4 dock 前端
 ├─ doc/              # 设计、架构、组件、运行时文档
 ├─ scripts/
@@ -54,7 +56,8 @@ bit_shell/
 - `pin_app` / `unpin_app` 与 `state.json` 落盘
 - `config.toml` stub 自动生成、TOML 标量解析、Dock 配置 normalize
 - `bit_dock` 的 magnification、局部横向让位、启动 bounce 与运行态指示点
-- `bit_bar` 的工作区/标题/时钟/tray 基础前端，以及 shell-owned tray menu 渲染、popup 生命周期管理与键盘导航
+- `bit_bar` 的工作区/标题/时钟/tray 前端，以及 shell-owned tray menu 渲染、item-hosted popover 生命周期管理、monitor-bound menu sizing 与键盘导航
+- tray / tray_menu 文本在后端 ingress 处净化为有效 UTF-8，`bit_bar` 前端再做一层轻量兜底
 
 当前 `bit_dock` 的动画链路采用：
 
@@ -95,6 +98,8 @@ meson compile -C build
 
 - [start_bit_shelld.sh](scripts/startup/start_bit_shelld.sh)
 - [start_bit_dock.sh](scripts/startup/start_bit_dock.sh)
+- [acceptance_tray_runtime.sh](scripts/devtools/acceptance_tray_runtime.sh)
+- [acceptance_dock_lifecycle.sh](scripts/devtools/acceptance_dock_lifecycle.sh)
 
 测试命令：
 
@@ -103,6 +108,8 @@ meson test -C build
 ```
 
 当前仓库还没有完整测试集；提交前至少应保证 `meson compile -C build` 通过。
+
+当前运行态验收脚本位于 [scripts/devtools](scripts/devtools/README.md)，重点覆盖 tray runtime 与 dock lifecycle 两条高频回归路径。
 
 ## 配置与状态文件
 
@@ -160,4 +167,4 @@ Dock 当前公开的持久化配置包括：
 
 ## 当前状态
 
-这个仓库还处在持续迭代阶段。当前更接近“核心 runtime + Dock 前端已成型，剩余组件和更完整系统集成继续补齐”的状态，而不是完整桌面发行版。
+这个仓库还处在持续迭代阶段。当前更接近“核心 runtime + dock / bar 前端已成型，剩余组件和更完整系统集成继续补齐”的状态，而不是完整桌面发行版。
